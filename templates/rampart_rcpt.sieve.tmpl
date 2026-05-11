@@ -1,0 +1,67 @@
+require ["variables", "envelope", "reject", "vnd.stalwart.expressions"];
+
+# Defence in depth: inbound mail to the internal LMTP domain is a
+# loop attempt; reject outright. (The domain isn't MX'd so this
+# shouldn't arrive externally.)
+if envelope :domain :is "to" "internal.rampart.lmtp" {
+    reject "550 5.1.1 Not a routable destination";
+}
+
+{%- if !domains.is_empty() %}
+# Per-managed-alias-domain logic. Forward-path rewrites envelope.to to
+# the synthetic rampart-<alias_id>@internal.rampart.lmtp; reply-path (local-part
+# starts with the domain's reply_prefix) rewrites to rampart-reply-<rc_id>.
+# Both synthetic recipients are relayed via queue.route.rampart-lmtp to the
+# rampart-worker LMTP socket.
+if anyof (
+{%- for d in domains %}
+  envelope :domain :is "to" "{{ d }}"{% if !loop.last %},{% endif %}
+{%- endfor %}
+) {
+    # Reply path first: local-part matches the reply_prefix.
+    # The prefix is locked system-wide to `ra+` (matches simplelogin's
+    # convention). `+` is a literal in Sieve :matches; only `*` and `?`
+    # are wildcards.
+    # Stalwart's Sieve `query()` passes the SQL through to the underlying
+    # store verbatim — no `?` → `$1` translation. Postgres rejects `?` as
+    # a syntax error and the lookup silently returns empty. Use `$1`
+    # placeholders directly.
+    if envelope :localpart :matches "to" "ra+*" {
+        let "rc_id" "query('sql',
+            'SELECT rampart_resolve_reply($1)',
+            [envelope.to])";
+        if eval "is_empty(rc_id)" {
+            reject "550 5.1.1 Unknown or blocked reply handle";
+        }
+        set "envelope.to" "rampart-reply-${rc_id}@internal.rampart.lmtp";
+        return;
+    }
+
+    # Bounce VERP path: outbound MAIL FROM is
+    #   bnc+{phase}+{email_log_id}+{HMAC-tag}@<alias_domain>
+    # so any DSN lands here. Forward the whole payload to the worker
+    # opaquely; the worker HMAC-verifies before touching email_log.
+    # Local-parts may contain `+`, so the synthetic LMTP recipient
+    # carries the separators verbatim.
+    if envelope :localpart :matches "to" "bnc+*" {
+        set "envelope.to" "rampart-bnc-${1}@internal.rampart.lmtp";
+        return;
+    }
+
+    # Forward path: look up an existing enabled alias, or auto-create on
+    # a catch-all domain (respecting max_auto_created / mailbox+user
+    # enabled / mailbox verified). Returns NULL when neither applies.
+    let "alias_id" "query('sql',
+        'SELECT rampart_resolve_or_create($1)',
+        [envelope.to])";
+    if eval "is_empty(alias_id)" {
+        reject "550 5.1.1 Unknown or disabled alias";
+    }
+    set "envelope.to" "rampart-${alias_id}@internal.rampart.lmtp";
+}
+{%- else %}
+# No alias_domain rows yet — nothing to route. The internal-LMTP guard
+# above is the only active rule. Sieve doesn't accept an empty anyof()
+# list (it parses but is a script-shape smell), so emit no managed-domain
+# block at all.
+{%- endif %}

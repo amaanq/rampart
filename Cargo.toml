@@ -1,0 +1,98 @@
+[package]
+name = "rampart"
+version = "0.1.0"
+edition = "2024"
+description = "Self-hosted forward-only email alias manager, integrates with Stalwart via Sieve."
+license = "AGPL-3.0-or-later"
+publish = false
+
+[lib]
+name = "rampart"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rampart"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["macros", "tokio", "http2"] }
+tokio = {
+	version = "1",
+	features = [
+		"rt-multi-thread",
+		"macros",
+		"signal",
+		"fs",
+		"io-util",
+		"net",
+	],
+}
+tower = "0.5"
+tower-http = { version = "0.6", features = ["trace", "fs"] }
+
+tokio-postgres = { version = "0.7", features = ["with-time-0_3"] }
+rampart-codegen = { path = "db/rampart-codegen" }
+deadpool-postgres = { version = "0.14", features = ["rt_tokio_1"] }
+refinery = { version = "0.8", features = ["tokio-postgres"] }
+
+askama = "0.14"
+
+rust-argon2 = "2"
+hmac-sha256 = "1"
+constant_time_eq = "0.3"
+data-encoding = "2.11"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+thiserror = "2"
+anyhow = "1"
+
+time = { version = "0.3", features = ["formatting", "serde", "serde-well-known"] }
+rand = "0.9"
+hex = "0.4"
+clap = { version = "4", features = ["derive", "env"] }
+sd-notify = "0.4"
+lru = "0.14"
+
+lettre = {
+	version = "0.11",
+	default-features = false,
+	features = [
+		"builder",
+		"smtp-transport",
+		"tokio1-rustls-tls",
+		"hostname",
+		"pool",
+	],
+}
+# `danger-allow-state-serialisation` is required because we persist
+# webauthn ceremony state across HTTP request boundaries.
+webauthn-rs = {
+	version = "0.5",
+	features = [
+		"danger-allow-state-serialisation",
+	],
+}
+url = "2"
+
+mail-parser = "0.11"
+async-trait = "0.1"
+
+reqwest = {
+	version = "0.12",
+	default-features = false,
+	features = [
+		"rustls-tls",
+		"json",
+	],
+}
+
+[dev-dependencies]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

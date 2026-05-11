@@ -1,0 +1,55 @@
+{% extends "layout.html" %}
+{% block title %}settings{% endblock %}
+{% block admin_nav %}{% if is_admin %}<a href="/admin/users">admin</a>{% endif %}{% endblock %}
+{% block user_menu %}
+<div class="user-menu">
+    <span>{{ user_email }}</span>
+    <form method="post" action="/logout" class="logout-form">
+        <button type="submit" class="secondary">logout</button>
+    </form>
+</div>
+{% endblock %}
+{% block body %}
+<section class="card">
+    <h2>change password</h2>
+    <form id="password-change-form" data-reload="no"
+          hx-post="/api/v1/user/password" hx-ext="json-enc">
+        <label>current password <input type="password" name="current_password" required></label>
+        <label>new password (min 10) <input type="password" name="new_password" minlength="10" required></label>
+        <button type="submit">change password</button>
+    </form>
+</section>
+
+<section class="card">
+    <h2>change email</h2>
+    <p class="hint">A confirmation link will be sent to the NEW address.</p>
+    <form id="email-change-form" data-reload="no"
+          hx-post="/api/v1/user/email" hx-ext="json-enc">
+        <label>new email <input type="email" name="new_email" required></label>
+        <button type="submit">send confirmation</button>
+    </form>
+</section>
+
+<section class="card">
+    <h2>passkeys (Yubikey / WebAuthn)</h2>
+    <form id="passkey-register-form" data-reload="no">
+        <label>label (e.g. "work yubikey") <input type="text" id="pk-name" required></label>
+        <button type="submit">register passkey</button>
+    </form>
+    <table class="passkeys-table">
+        <thead><tr><th>name</th><th>created</th><th>last used</th><th></th></tr></thead>
+        <tbody>
+        {%- for k in passkeys %}
+            <tr>
+                <td>{{ k.name }}</td>
+                <td>{{ k.created_at }}</td>
+                <td>{% if let Some(t) = k.last_used_at %}{{ t }}{% else %}never{% endif %}</td>
+                <td><button hx-delete="/api/v1/user/webauthn/credentials/{{ k.id }}"
+                            hx-confirm="delete passkey {{ k.name }}?">×</button></td>
+            </tr>
+        {%- endfor %}
+        </tbody>
+    </table>
+</section>
+<script src="/static/webauthn.js" defer></script>
+{% endblock %}

@@ -1,0 +1,52 @@
+{% extends "layout.html" %}
+{% block title %}activity — {{ alias_address }}{% endblock %}
+{% block admin_nav %}{% if is_admin %}<a href="/admin/users">admin</a>{% endif %}{% endblock %}
+{% block user_menu %}
+<div class="user-menu">
+    <span>{{ user_email }}</span>
+    <form method="post" action="/logout" class="logout-form">
+        <button type="submit" class="secondary">logout</button>
+    </form>
+</div>
+{% endblock %}
+{% block body %}
+<section>
+    <p><a href="/">&larr; aliases</a></p>
+    <h2>activity for <code>{{ alias_address }}</code></h2>
+</section>
+
+<section>
+    {%- if activities.is_empty() %}
+    <p class="hint">No activity yet.</p>
+    {%- else %}
+    <table>
+        <thead>
+            <tr>
+                <th>when</th>
+                <th>action</th>
+                <th>from</th>
+                <th>reason</th>
+            </tr>
+        </thead>
+        <tbody>
+        {%- for a in activities %}
+            <tr>
+                <td>{{ a.created_at }}</td>
+                <td>{{ a.action }}</td>
+                <td>{{ a.from_address.as_deref().unwrap_or("") }}</td>
+                <td>{{ a.reason.as_deref().unwrap_or("") }}</td>
+            </tr>
+        {%- endfor %}
+        </tbody>
+    </table>
+    <nav class="pager">
+        {%- if page > 0 %}
+        <a href="?page={{ page - 1 }}">&larr; prev</a>
+        {%- endif %}
+        {%- if has_next %}
+        <a href="?page={{ page + 1 }}">next &rarr;</a>
+        {%- endif %}
+    </nav>
+    {%- endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "layout.html" %}
+{% block title %}admin — domains{% endblock %}
+{% block admin_nav %}<a href="/admin/users">users</a><a href="/admin/domains">domains</a>{% endblock %}
+{% block user_menu %}
+<div class="user-menu">
+    <span>{{ user_email }} (admin)</span>
+    <form method="post" action="/logout" class="logout-form">
+        <button type="submit" class="secondary">logout</button>
+    </form>
+</div>
+{% endblock %}
+{% block body %}
+<section>
+    <h2>alias domains (all)</h2>
+    <table>
+        <thead>
+            <tr><th>id</th><th>domain</th><th>owner</th><th>shared</th><th>aliases</th><th></th></tr>
+        </thead>
+        <tbody>
+        {%- for d in domains %}
+            <tr>
+                <td>{{ d.id }}</td>
+                <td>{{ d.domain }}</td>
+                <td>{{ d.owner_email.as_deref().unwrap_or("(none)") }}</td>
+                <td>{{ d.shared }}</td>
+                <td>{{ d.nb_alias }}</td>
+                <td>
+                    {% if d.shared %}
+                    <button hx-put="/api/v1/admin/domains/{{ d.id }}/shared"
+                            hx-vals='{"shared":false}' hx-ext="json-enc">unshare</button>
+                    {% else %}
+                    <button hx-put="/api/v1/admin/domains/{{ d.id }}/shared"
+                            hx-vals='{"shared":true}' hx-ext="json-enc">promote to shared</button>
+                    {% endif %}
+                </td>
+            </tr>
+        {%- endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

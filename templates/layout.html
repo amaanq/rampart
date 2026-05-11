@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>rampart — {% block title %}dashboard{% endblock %}</title>
+    <link rel="stylesheet" href="/static/app.css">
+    <!--
+        Configure htmx BEFORE loading it. Strict CSP (`style-src 'self'`)
+        forbids inline <style>, but htmx defaults to injecting indicator
+        styles inline. Disable that. Also disable script-tag execution
+        and eval to keep our `script-src 'self'` + no-unsafe-* posture.
+    -->
+    <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false}'>
+    <script src="/static/htmx.min.js" defer></script>
+    <script src="/static/htmx-ext-json-enc.min.js" defer></script>
+    <script src="/static/app.js" defer></script>
+</head>
+<body hx-swap="none">
+<header>
+    <h1><a href="/">rampart</a></h1>
+    <nav>
+        <a href="/">aliases</a>
+        <a href="/mailboxes">mailboxes</a>
+        <a href="/domains">domains</a>
+        <a href="/settings">settings</a>
+        {% block admin_nav %}{% endblock %}
+    </nav>
+    {% block user_menu %}{% endblock %}
+</header>
+<main>
+    {% block body %}{% endblock %}
+</main>
+</body>
+</html>

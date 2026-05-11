@@ -1,0 +1,51 @@
+# Ignore everything; whitelist real project files explicitly.
+*
+
+# Top-level
+!.envrc
+!.gitignore
+!Cargo.lock
+!Cargo.toml
+!README.md
+!clorinde.toml
+!flake.lock
+!flake.nix
+!rust-toolchain.toml
+
+# Source
+!src/
+!src/**
+
+# Tests
+!tests/
+!tests/**
+
+# Schema + queries
+!migrations/
+!migrations/**
+!queries/
+!queries/**
+
+# clorinde-generated codegen — committed for reproducible builds.
+# target/ and Cargo.lock inside stay out via the "*" default.
+!db/
+!db/rampart-codegen/
+!db/rampart-codegen/Cargo.toml
+!db/rampart-codegen/src/
+!db/rampart-codegen/src/**
+
+# Static + templates
+!static/
+!static/**
+!templates/
+!templates/**
+
+# Nix + deploy
+!nix/
+!nix/**
+
+# Docs + scripts
+!docs/
+!docs/**
+!scripts/
+!scripts/**

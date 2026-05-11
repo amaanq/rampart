@@ -1,0 +1,5 @@
+test.example; dmarc=pass header.from=gmail.com; spf=pass smtp.mailfrom=alice@gmail.com; dkim=pass header.d=gmail.com
+##
+## tests/reply.rs reads only the first non-`##` line via include_str!
+## + .trim_end(). Replace it with a header captured from your live
+## stalwart if the parser ever drifts.

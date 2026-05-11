@@ -1,0 +1,20 @@
+<tr id="alias-{{ a.id }}" class="{% if !a.enabled %}disabled{% endif %}">
+    <td><code>{{ a.address }}</code></td>
+    <td>{{ a.mailbox.email }}</td>
+    <td>{{ a.note.as_deref().unwrap_or("") }}</td>
+    <td>{{ a.nb_forward }}</td>
+    <td>{% if let Some(t) = a.last_email_at %}{{ t }}{% endif %}</td>
+    <td>
+        <a href="/aliases/{{ a.id }}/contacts">contacts</a>
+        &middot;
+        <a href="/aliases/{{ a.id }}/activity">activity</a>
+        &middot;
+        <button hx-put="/api/v1/aliases/{{ a.id }}/toggle"
+>
+            {% if a.enabled %}disable{% else %}enable{% endif %}
+        </button>
+        <button hx-delete="/api/v1/aliases/{{ a.id }}"
+                hx-confirm="delete {{ a.address }}?"
+>×</button>
+    </td>
+</tr>

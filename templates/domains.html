@@ -1,0 +1,40 @@
+{% extends "layout.html" %}
+{% block title %}domains{% endblock %}
+{% block admin_nav %}{% if is_admin %}<a href="/admin/users">admin</a>{% endif %}{% endblock %}
+{% block user_menu %}
+<div class="user-menu">
+    <span>{{ user_email }}</span>
+    <form method="post" action="/logout" class="logout-form">
+        <button type="submit" class="secondary">logout</button>
+    </form>
+</div>
+{% endblock %}
+{% block body %}
+<section class="card">
+    <h2>add your alias domain</h2>
+    <p class="hint">Private to you. Admin can promote to shared from /admin/domains.</p>
+    <form hx-post="/api/v1/domain" hx-ext="json-enc">
+        <label>domain <input type="text" name="domain" required></label>
+        <label>random prefix <input type="text" name="random_prefix" placeholder="(optional)"></label>
+        <p class="hint">Reply prefix is locked to <code>ra+</code> system-wide.</p>
+        <button type="submit">add</button>
+    </form>
+</section>
+<section>
+    <h2>alias domains you can use</h2>
+    <table>
+        <thead><tr><th>domain</th><th>kind</th><th>random prefix</th><th>reply prefix</th><th>aliases</th></tr></thead>
+        <tbody>
+        {%- for d in domains %}
+            <tr>
+                <td>{{ d.domain }}</td>
+                <td>{% if d.shared %}shared{% else if d.mine %}yours{% else %}admin{% endif %}</td>
+                <td><code>{{ d.random_prefix }}</code></td>
+                <td><code>{{ d.reply_prefix }}</code></td>
+                <td>{{ d.nb_alias }}</td>
+            </tr>
+        {%- endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}

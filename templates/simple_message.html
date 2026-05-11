@@ -1,0 +1,12 @@
+{% extends "layout.html" %}
+{% block title %}{{ heading }}{% endblock %}
+{% block user_menu %}{% endblock %}
+{% block body %}
+<section class="card">
+    <h2>{{ heading }}</h2>
+    <p>{{ message }}</p>
+    {%- if show_back %}
+    <p><a href="/">back</a></p>
+    {%- endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,229 @@
+* { box-sizing: border-box; }
+:root {
+    --fg: #222;
+    --bg: #fafafa;
+    --muted: #666;
+    --border: #ddd;
+    --accent: #0057d8;
+    --danger: #c03030;
+}
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    margin: 0;
+    color: var(--fg);
+    background: var(--bg);
+    line-height: 1.5;
+}
+header {
+    display: flex;
+    align-items: center;
+    gap: 2em;
+    padding: 1rem 2rem;
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+}
+header h1 { margin: 0; font-size: 1.2em; }
+header h1 a { color: var(--fg); text-decoration: none; }
+nav { display: flex; gap: 1em; }
+nav a { color: var(--muted); text-decoration: none; }
+nav a:hover { color: var(--accent); }
+.user-menu {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 1em;
+    font-size: .9em;
+    color: var(--muted);
+}
+
+main { max-width: 1000px; margin: 2rem auto; padding: 0 1rem; }
+
+/* Auth pages: login / signup / forgot / reset.
+   Single centered card, visually distinct from the dashboard's
+   .card layout (which is denser and fills width). */
+main.auth {
+    max-width: 380px;
+    margin: 6rem auto 4rem;
+    padding: 0 1rem;
+}
+main.auth .brand {
+    display: block;
+    margin: 0 auto 1.5rem;
+    text-align: center;
+    font-size: 1.5em;
+    font-weight: 600;
+    color: var(--fg);
+    text-decoration: none;
+    letter-spacing: -.02em;
+}
+.auth-card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 2rem 1.75rem 1.5rem;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 4px 12px rgba(0, 0, 0, .04);
+}
+.auth-card h1 {
+    margin: 0 0 1.25rem;
+    font-size: 1.15em;
+    font-weight: 600;
+    color: var(--fg);
+}
+.auth-error {
+    margin: -.25rem 0 1rem;
+    padding: .55em .75em;
+    background: #fdf0f0;
+    border: 1px solid #f4cccc;
+    border-radius: 6px;
+    color: var(--danger);
+    font-size: .9em;
+}
+.auth-form {
+    display: flex;
+    flex-direction: column;
+    gap: .35rem;
+    margin: 0;
+}
+.auth-form label {
+    font-size: .82em;
+    color: var(--muted);
+    margin-top: .5rem;
+}
+.auth-form label:first-child { margin-top: 0; }
+.auth-form input {
+    padding: .55em .7em;
+    font-size: .95em;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    width: 100%;
+    min-width: 0;
+    transition: border-color .12s, box-shadow .12s;
+}
+.auth-form input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(0, 87, 216, .12);
+}
+.auth-submit, .auth-passkey {
+    margin-top: 1rem;
+    padding: .65em 1em;
+    font-size: .95em;
+    font-weight: 500;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    width: 100%;
+}
+.auth-submit { background: var(--accent); color: #fff; }
+.auth-submit:hover { background: #0046b3; }
+.auth-passkey {
+    margin-top: 0;
+    background: #fff;
+    color: var(--accent);
+    border: 1px solid var(--border);
+}
+.auth-passkey:hover { border-color: var(--accent); background: #f6f9fe; }
+.auth-form-secondary { margin-top: 0; }
+.auth-sep {
+    display: flex;
+    align-items: center;
+    gap: .75em;
+    margin: 1.25rem 0;
+    color: var(--muted);
+    font-size: .8em;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+}
+.auth-sep::before, .auth-sep::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+}
+.auth-status {
+    margin: .5em 0 0;
+    min-height: 1.1em;
+    color: var(--muted);
+    font-size: .85em;
+    text-align: center;
+}
+.auth-status:empty { display: none; }
+.auth-hint {
+    margin: 1.25rem 0 0;
+    text-align: center;
+    color: var(--muted);
+    font-size: .85em;
+}
+.auth-hint a { color: var(--accent); text-decoration: none; }
+.auth-hint a:hover { text-decoration: underline; }
+.auth-sep-dot { margin: 0 .5em; }
+.auth-optional {
+    color: var(--muted);
+    font-weight: normal;
+    font-size: .9em;
+}
+
+section { margin-bottom: 2em; }
+
+.card {
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1em 1.5em;
+    margin-bottom: 2em;
+}
+.card h2 { margin-top: 0; font-size: 1em; color: var(--muted); }
+.hint { color: var(--muted); font-size: .85em; margin: .25em 0; }
+.error { color: var(--danger); font-weight: 500; }
+
+form { display: flex; flex-wrap: wrap; gap: .75em; align-items: end; }
+main.auth form { flex-direction: column; align-items: stretch; text-align: left; }
+label { display: flex; flex-direction: column; font-size: .85em; color: var(--muted); }
+input, select { padding: .4em .6em; font-size: 1em; border: 1px solid var(--border); border-radius: 4px; min-width: 12em; }
+button {
+    padding: .5em 1em;
+    font-size: .9em;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+}
+button:hover { opacity: .9; }
+button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+th, td { padding: .6em 1em; text-align: left; }
+th { background: #f0f0f0; font-size: .85em; color: var(--muted); font-weight: 600; }
+tr { border-top: 1px solid var(--border); }
+tr.disabled { opacity: .5; }
+tr.disabled code { text-decoration: line-through; }
+
+code {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: .95em;
+}
+
+/* Strict CSP (`style-src 'self'`) blocks inline `style=` attributes —
+   classes below replace patterns that used to be inline. */
+.logout-form { display: inline; }
+.pager { margin-top: 1em; display: flex; gap: 1em; }
+.passkeys-table { margin-top: 1em; }
+.rampart-error-banner {
+    background: #fee;
+    border: 1px solid #c33;
+    color: #900;
+    padding: .8em 1.2em;
+    margin: 0 0 1em 0;
+    border-radius: 4px;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: .95em;
+    white-space: pre-wrap;
+}

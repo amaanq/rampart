@@ -1,0 +1,42 @@
+{% extends "layout.html" %}
+{% block title %}admin — users{% endblock %}
+{% block admin_nav %}<a href="/admin/users">users</a><a href="/admin/domains">domains</a>{% endblock %}
+{% block user_menu %}
+<div class="user-menu">
+    <span>{{ user_email }} (admin)</span>
+    <form method="post" action="/logout" class="logout-form">
+        <button type="submit" class="secondary">logout</button>
+    </form>
+</div>
+{% endblock %}
+{% block body %}
+<section>
+    <h2>users</h2>
+    <table>
+        <thead>
+            <tr><th>id</th><th>email</th><th>admin</th><th>enabled</th><th>aliases</th><th>domains</th><th>created</th><th></th></tr>
+        </thead>
+        <tbody>
+        {%- for u in users %}
+            <tr class="{% if !u.enabled %}disabled{% endif %}">
+                <td>{{ u.id }}</td>
+                <td>{{ u.email }}</td>
+                <td>{{ u.is_admin }}</td>
+                <td>{{ u.enabled }}</td>
+                <td>{{ u.nb_aliases }}</td>
+                <td>{{ u.nb_domains }}</td>
+                <td>{{ u.created_at }}</td>
+                <td>
+                    {% if u.enabled %}
+                    <button hx-put="/api/v1/admin/users/{{ u.id }}/disable"
+                            hx-confirm="disable {{ u.email }}? (sessions + api keys revoked, aliases disabled)">disable</button>
+                    {% else %}
+                    <button hx-put="/api/v1/admin/users/{{ u.id }}/enable">enable</button>
+                    {% endif %}
+                </td>
+            </tr>
+        {%- endfor %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}
