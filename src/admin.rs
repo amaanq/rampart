@@ -479,6 +479,117 @@ impl GcStats {
     }
 }
 
+pub async fn dev_seed(url: &str) -> Result<()> {
+    let localish = url.contains("localhost")
+        || url.contains("127.0.0.1")
+        || url.contains("/tmp")
+        || url.contains("::1");
+    if !localish && std::env::var("RAMPART_DEV_SEED_ALLOW").is_err() {
+        bail!(
+            "dev_seed refused: database URL does not appear to be local.\n\
+             Set RAMPART_DEV_SEED_ALLOW=1 to override."
+        );
+    }
+    if !localish {
+        tracing::warn!("RAMPART_DEV_SEED_ALLOW set, proceeding against non-local database");
+    }
+
+    let c = db::connect_once(url).await?;
+
+    if users::by_email_id_unfiltered()
+        .bind(&c, &"dev@localhost")
+        .opt()
+        .await?
+        .is_some()
+    {
+        println!("dev seed already applied, nothing to do");
+        return Ok(());
+    }
+
+    let password_hash = hash_password("devpassword")?;
+    let user_id = users::create()
+        .bind(
+            &c,
+            &"dev@localhost".to_string(),
+            &Some(password_hash),
+            &Some("Developer".to_string()),
+            &true,
+        )
+        .one()
+        .await
+        .context("creating dev user")?;
+    println!("  user:  dev@localhost (admin)");
+
+    let domain_id = domains::create()
+        .bind(
+            &c,
+            &"dev.local".to_string(),
+            &Some(user_id),
+            &None::<String>,
+        )
+        .one()
+        .await
+        .context("creating dev domain")?;
+    println!("  domain: dev.local");
+
+    let mailbox_id = mailboxes::create_verified()
+        .bind(&c, &user_id, &"dev@dev.local".to_string(), &None::<String>)
+        .one()
+        .await
+        .context("creating dev mailbox")?;
+
+    let aliases_data: &[(&str, bool, bool, Option<&str>)] = &[
+        (
+            "github@dev.local",
+            true,
+            false,
+            Some("GitHub notifications"),
+        ),
+        ("shopping@dev.local", true, false, Some("Online shopping")),
+        (
+            "newsletter@dev.local",
+            true,
+            true,
+            Some("Monthly newsletter"),
+        ),
+        ("social@dev.local", true, false, None),
+        ("work@dev.local", true, false, Some("Work-related emails")),
+        (
+            "spamcatcher@dev.local",
+            false,
+            false,
+            Some("Caught too much spam"),
+        ),
+    ];
+
+    for (address, enabled, pinned, note) in aliases_data {
+        let note_opt: Option<String> = note.map(|s| s.to_string());
+        aliases::create_with_flags()
+            .bind(
+                &c,
+                &user_id,
+                &address.to_string(),
+                &domain_id,
+                &mailbox_id,
+                enabled,
+                pinned,
+                &note_opt,
+            )
+            .await
+            .with_context(|| format!("creating alias {address}"))?;
+    }
+    println!(
+        "  aliases: {} (mixed enabled/disabled, pinned)",
+        aliases_data.len()
+    );
+
+    println!();
+    println!("  Login:   dev@localhost / devpassword");
+    println!("  URL:     http://localhost:8090");
+
+    Ok(())
+}
+
 pub const DEFAULT_EMAIL_LOG_DAYS: i32 = 90;
 
 pub async fn gc(url: &str, email_log_days: i32, dry_run: bool) -> Result<GcStats> {
