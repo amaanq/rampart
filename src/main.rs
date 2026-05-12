@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-use rampart::{admin, bootstrap, config, migrate, serve, worker};
+use rampart::{admin, bootstrap, config, migrate, preview, serve, worker};
 
 #[derive(Parser)]
 #[command(name = "rampart", version, about = "Forward-only email alias manager.")]
@@ -14,6 +14,9 @@ struct Cli {
 enum Cmd {
     /// Run the HTTP server.
     Serve,
+
+    /// Start a zero-dependency preview server with mock data.
+    Preview,
 
     /// Run the LMTP resubmit worker.
     Worker,
@@ -97,6 +100,9 @@ enum AdminCmd {
     /// Import aliases from CSV produced by export-aliases.
     ImportAliases { file: std::path::PathBuf },
 
+    /// Idempotently seed the database with demo data for UI development.
+    DevSeed,
+
     /// Prune expired/used tokens, stale rate-limit buckets, expired sessions,
     /// expired webauthn ceremonies, old email_log rows. Idempotent.
     Gc {
@@ -159,6 +165,16 @@ async fn run(cli: Cli) -> Result<()> {
         Cmd::Serve => {
             let cfg = config::Config::from_env()?;
             serve::serve(cfg).await
+        }
+        Cmd::Preview => {
+            use std::net::SocketAddr;
+            let listen: SocketAddr = std::env::var("RAMPART_LISTEN")
+                .unwrap_or_else(|_| "127.0.0.1:8090".into())
+                .parse()
+                .context("parsing RAMPART_LISTEN")?;
+            let static_dir =
+                std::env::var("RAMPART_STATIC_DIR").unwrap_or_else(|_| "static".into());
+            preview::serve(listen, static_dir).await
         }
         Cmd::Worker => {
             let cfg = config::Config::from_env()?;
@@ -226,6 +242,7 @@ async fn run(cli: Cli) -> Result<()> {
                 admin::export_aliases(&database_url()?, user_email).await
             }
             AdminCmd::ImportAliases { file } => admin::import_aliases(&database_url()?, file).await,
+            AdminCmd::DevSeed => admin::dev_seed(&database_url()?).await,
             AdminCmd::Gc {
                 email_log_days,
                 dry_run,

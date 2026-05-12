@@ -18,6 +18,7 @@ pub mod db;
 pub mod flows;
 pub mod mailer;
 pub mod migrate;
+pub mod preview;
 pub mod serve;
 pub mod worker;
 
