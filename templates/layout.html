@@ -24,9 +24,23 @@
         <a href="/mailboxes">mailboxes</a>
         <a href="/domains">domains</a>
         <a href="/settings">settings</a>
-        {% block admin_nav %}{% endblock %}
     </nav>
-    {% block user_menu %}{% endblock %}
+    {% block user_menu %}
+    <details class="user-menu">
+        <summary>{{ user_email }} <span class="user-menu-caret" aria-hidden="true">▾</span></summary>
+        <div class="user-menu-panel">
+            {%- if is_admin %}
+            <span class="user-menu-section-label">admin</span>
+            <a href="/admin/users">users</a>
+            <a href="/admin/domains">domains</a>
+            <div class="user-menu-divider"></div>
+            {%- endif %}
+            <form method="post" action="/logout" class="user-menu-form">
+                <button type="submit">logout</button>
+            </form>
+        </div>
+    </details>
+    {% endblock %}
 </header>
 <main>
     {% block body %}{% endblock %}

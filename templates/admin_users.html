@@ -1,14 +1,5 @@
 {% extends "layout.html" %}
 {% block title %}admin — users{% endblock %}
-{% block admin_nav %}<a href="/admin/users">users</a><a href="/admin/domains">domains</a>{% endblock %}
-{% block user_menu %}
-<div class="user-menu">
-    <span>{{ user_email }} (admin)</span>
-    <form method="post" action="/logout" class="logout-form">
-        <button type="submit" class="secondary">logout</button>
-    </form>
-</div>
-{% endblock %}
 {% block body %}
 <section>
     <h2>users</h2>

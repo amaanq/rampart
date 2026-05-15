@@ -24,17 +24,75 @@ header {
 }
 header h1 { margin: 0; font-size: 1.2em; }
 header h1 a { color: var(--fg); text-decoration: none; }
-nav { display: flex; gap: 1em; }
+nav { display: flex; align-items: center; gap: 1em; }
 nav a { color: var(--muted); text-decoration: none; }
 nav a:hover { color: var(--accent); }
+
+/* User menu: <details>/<summary> dropdown (CSP-safe, no JS).
+   Anchored top-right via margin-left:auto. */
 .user-menu {
     margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 1em;
+    position: relative;
     font-size: .9em;
-    color: var(--muted);
 }
+.user-menu summary {
+    list-style: none;
+    cursor: pointer;
+    color: var(--muted);
+    padding: .25em .65em;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    user-select: none;
+}
+.user-menu summary::-webkit-details-marker { display: none; }
+.user-menu summary:hover { border-color: var(--border); color: var(--fg); }
+.user-menu[open] summary { border-color: var(--border); color: var(--fg); }
+.user-menu-caret { font-size: .7em; margin-left: .35em; opacity: .7; }
+.user-menu-panel {
+    position: absolute;
+    top: calc(100% + .25em);
+    right: 0;
+    min-width: 12em;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.08);
+    padding: .35em 0;
+    z-index: 10;
+}
+.user-menu-panel a {
+    display: block;
+    padding: .4em 1em;
+    color: var(--fg);
+    text-decoration: none;
+}
+.user-menu-panel a:hover { background: var(--bg); color: var(--accent); }
+.user-menu-section-label {
+    display: block;
+    padding: .5em 1em .2em;
+    font-size: .7em;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+}
+.user-menu-divider {
+    height: 1px;
+    margin: .35em 0;
+    background: var(--border);
+}
+.user-menu-form { margin: 0; padding: 0; }
+.user-menu-form button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: .4em 1em;
+    background: none;
+    border: 0;
+    color: var(--fg);
+    font: inherit;
+    cursor: pointer;
+}
+.user-menu-form button:hover { background: var(--bg); color: var(--accent); }
 
 main { max-width: 1000px; margin: 2rem auto; padding: 0 1rem; }
 
@@ -213,7 +271,6 @@ code {
 
 /* Strict CSP (`style-src 'self'`) blocks inline `style=` attributes —
    classes below replace patterns that used to be inline. */
-.logout-form { display: inline; }
 .pager { margin-top: 1em; display: flex; gap: 1em; }
 .passkeys-table { margin-top: 1em; }
 .rampart-error-banner {

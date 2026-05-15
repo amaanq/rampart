@@ -745,6 +745,11 @@ struct SimpleMessage<'a> {
     heading: &'a str,
     message: &'a str,
     show_back: bool,
+    /// Read by askama via layout.html. Always false here: this is shown
+    /// in unauthenticated or error contexts where principal lookup isn't
+    /// available.
+    #[allow(dead_code)]
+    is_admin: bool,
 }
 
 /// Templated message page extending layout.html — strict CSP blocks the
@@ -760,6 +765,7 @@ fn render_simple_message(
         heading,
         message,
         show_back,
+        is_admin: false,
     })
     .render()
     {
