@@ -10,18 +10,35 @@
   };
 
   outputs =
-    {
-      self,
-      nixpkgs,
-      fenix,
-    }:
+    { nixpkgs, fenix, ... }:
     let
-      systems = [
-        "x86_64-linux"
-        "aarch64-linux"
-      ];
-      forEachSystem = f: nixpkgs.lib.genAttrs systems (system: f system);
-      pkgsFor = system: import nixpkgs { inherit system; };
+      forEachSystem = nixpkgs.lib.genAttrs nixpkgs.lib.systems.doubles.linux;
+      pkgsFor = system: nixpkgs.legacyPackages.${system} or (import nixpkgs { inherit system; });
+
+      hasFenix = system: fenix.packages ? ${system};
+      rustPlatformFor =
+        system:
+        let
+          pkgs = pkgsFor system;
+          toolchain = fenix.packages.${system}.stable.toolchain;
+        in
+        if hasFenix system then
+          pkgs.makeRustPlatform {
+            cargo = toolchain;
+            rustc = toolchain;
+          }
+        else
+          pkgs.rustPlatform;
+      toolchainFor =
+        system:
+        if hasFenix system then
+          [ fenix.packages.${system}.stable.toolchain ]
+        else
+          (with pkgsFor system; [
+            cargo
+            rustc
+            rustfmt
+          ]);
 
       # nixpkgs ships clorinde 1.4.1, which lacks `attributes-nullable`
       # and silently emits the wrong serde adapter on Option<OffsetDateTime>
@@ -59,19 +76,13 @@
         system:
         let
           pkgs = pkgsFor system;
-          fenixPkgs = fenix.packages.${system};
-          toolchain = fenixPkgs.stable.toolchain;
-          rustPlatform = pkgs.makeRustPlatform {
-            cargo = toolchain;
-            rustc = toolchain;
-          };
         in
         {
           # `nix build .#default` from a dev shell. NixOS hosts with a
           # cross-configured pkgs use `services.rampart.package` (consumes the
           # host's pkgs) instead, so this stays a native build.
           default = pkgs.callPackage ./nix/package.nix {
-            inherit rustPlatform;
+            rustPlatform = rustPlatformFor system;
           };
         }
       );
@@ -80,13 +91,10 @@
         system:
         let
           pkgs = pkgsFor system;
-          fenixPkgs = fenix.packages.${system};
-          toolchain = fenixPkgs.stable.toolchain;
         in
         {
           default = pkgs.mkShell {
-            nativeBuildInputs = [
-              toolchain
+            nativeBuildInputs = toolchainFor system ++ [
               pkgs.pkg-config
             ];
             buildInputs = [
@@ -120,11 +128,11 @@
                 nativeBuildInputs = [
                   pkgs.postgresql_16
                   pkgs.diffutils
-                  # clorinde reformats output via rustfmt-on-PATH; without
-                  # it the check emits unformatted output and false-positives.
-                  fenix.packages.${system}.stable.toolchain
                   clorinde
-                ];
+                ]
+                # clorinde reformats output via rustfmt-on-PATH; without
+                # it the check emits unformatted output and false-positives.
+                ++ toolchainFor system;
               }
               ''
                 set -euo pipefail
