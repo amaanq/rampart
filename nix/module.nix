@@ -7,6 +7,7 @@
 
 let
   cfg = config.services.rampart;
+  usesScriptedLmtpAddress = cfg.lmtp.addToLoopback && !config.networking.useNetworkd;
   inherit (lib)
     mkEnableOption
     mkIf
@@ -253,7 +254,10 @@ in
     };
 
     networking.interfaces.lo.ipv4.addresses = lib.mkIf cfg.lmtp.addToLoopback [
-      { address = cfg.lmtp.address; prefixLength = 32; }
+      {
+        address = cfg.lmtp.address;
+        prefixLength = 32;
+      }
     ];
 
     systemd.tmpfiles.rules = [
@@ -261,7 +265,8 @@ in
       # 2775 = group-writable + setgid so files inherit the stalwart-mail
       # group regardless of rampart's umask.
       "d ${builtins.dirOf cfg.sieve.outputPath} 2775 ${cfg.user} stalwart-mail - -"
-    ] ++ lib.optionals cfg.backups.enable [
+    ]
+    ++ lib.optionals cfg.backups.enable [
       "d ${cfg.backups.destination} 0700 ${cfg.user} ${cfg.group} - -"
     ];
 
@@ -284,12 +289,18 @@ in
 
     systemd.services.rampart = {
       description = "rampart — email alias manager";
-      after = [ "postgresql.service" "rampart-migrate.service" ];
+      after = [
+        "postgresql.service"
+        "rampart-migrate.service"
+      ];
       requires = [ "rampart-migrate.service" ];
       wantedBy = [ "multi-user.target" ];
       # LoadCredential reads the secret once at process start; restart
       # on rotation so the new password is picked up.
-      restartTriggers = [ cfg.smtp.passwordFile cfg.stalwart.verpKeyFile ];
+      restartTriggers = [
+        cfg.smtp.passwordFile
+        cfg.stalwart.verpKeyFile
+      ];
       serviceConfig = {
         Type = "notify";
         NotifyAccess = "main";
@@ -338,11 +349,20 @@ in
     # systemd's Before= alone only orders, doesn't propagate failure.
     systemd.services.rampart-bootstrap-stalwart = {
       description = "rampart — seed stalwart JMAP registry (idempotent)";
-      after = [ "stalwart.service" "rampart-render-sieve.service" ];
-      requires = [ "stalwart.service" "rampart-render-sieve.service" ];
+      after = [
+        "stalwart.service"
+        "rampart-render-sieve.service"
+      ];
+      requires = [
+        "stalwart.service"
+        "rampart-render-sieve.service"
+      ];
       before = [ "rampart-worker.service" ];
       wantedBy = [ "multi-user.target" ];
-      restartTriggers = [ cfg.smtp.passwordFile cfg.stalwart.adminPasswordFile ];
+      restartTriggers = [
+        cfg.smtp.passwordFile
+        cfg.stalwart.adminPasswordFile
+      ];
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;
@@ -374,10 +394,22 @@ in
 
     systemd.services.rampart-worker = {
       description = "rampart — LMTP resubmit worker";
-      after = [ "postgresql.service" "rampart.service" "rampart-bootstrap-stalwart.service" ];
-      requires = [ "rampart.service" "rampart-bootstrap-stalwart.service" ];
+      after = [
+        "postgresql.service"
+        "rampart.service"
+        "rampart-bootstrap-stalwart.service"
+      ]
+      ++ optional usesScriptedLmtpAddress "network-addresses-lo.service";
+      requires = [
+        "rampart.service"
+        "rampart-bootstrap-stalwart.service"
+      ]
+      ++ optional usesScriptedLmtpAddress "network-addresses-lo.service";
       wantedBy = [ "multi-user.target" ];
-      restartTriggers = [ cfg.smtp.passwordFile cfg.stalwart.verpKeyFile ];
+      restartTriggers = [
+        cfg.smtp.passwordFile
+        cfg.stalwart.verpKeyFile
+      ];
       serviceConfig = {
         Type = "notify";
         NotifyAccess = "main";
@@ -423,9 +455,15 @@ in
     # effect (or it's picked up at the next stalwart restart).
     systemd.services.rampart-render-sieve = {
       description = "rampart — regenerate Sieve from current alias_domain rows";
-      after = [ "postgresql.service" "rampart-migrate.service" ];
+      after = [
+        "postgresql.service"
+        "rampart-migrate.service"
+      ];
       requires = [ "rampart-migrate.service" ];
-      before = [ cfg.sieve.stalwartUnit "rampart-bootstrap-stalwart.service" ];
+      before = [
+        cfg.sieve.stalwartUnit
+        "rampart-bootstrap-stalwart.service"
+      ];
       wantedBy = [ "multi-user.target" ];
       # No RemainAfterExit: returns to inactive after each successful
       # run so `systemctl start` actually re-runs ExecStart.
@@ -440,7 +478,10 @@ in
 
     systemd.services.rampart-gc = {
       description = "rampart — scheduled garbage collection";
-      after = [ "postgresql.service" "rampart-migrate.service" ];
+      after = [
+        "postgresql.service"
+        "rampart-migrate.service"
+      ];
       requires = [ "rampart-migrate.service" ];
       serviceConfig = {
         Type = "oneshot";
@@ -465,7 +506,10 @@ in
 
     systemd.services.rampart-backup = lib.mkIf cfg.backups.enable {
       description = "rampart — postgres pg_dump";
-      after = [ "postgresql.service" "rampart-migrate.service" ];
+      after = [
+        "postgresql.service"
+        "rampart-migrate.service"
+      ];
       requires = [ "postgresql.service" ];
       serviceConfig = {
         Type = "oneshot";
