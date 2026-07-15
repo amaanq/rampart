@@ -1,17 +1,11 @@
 {
   description = "rampart - forward-only email alias manager";
 
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    fenix = {
-      url = "github:nix-community/fenix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-  };
-
   outputs =
-    { nixpkgs, fenix, ... }:
+    { ... }@args:
     let
+      inputs = (import ./.tack) { overrides = args.tackOverrides or { }; };
+      inherit (inputs) fenix nixpkgs;
       forEachSystem = nixpkgs.lib.genAttrs nixpkgs.lib.systems.doubles.linux;
       pkgsFor = system: nixpkgs.legacyPackages.${system} or (import nixpkgs { inherit system; });
 
@@ -39,32 +33,6 @@
             rustc
             rustfmt
           ]);
-
-      # nixpkgs ships clorinde 1.4.1, which lacks `attributes-nullable`
-      # and silently emits the wrong serde adapter on Option<OffsetDateTime>
-      # fields. Pin to post-1.4.1 git until nixpkgs ships >= 1.4.2.
-      clorindeFor =
-        system:
-        let
-          pkgs = pkgsFor system;
-          src = pkgs.fetchFromGitHub {
-            owner = "halcyonnouveau";
-            repo = "clorinde";
-            rev = "e7354d2eef7b19c36d461f66aa272afee7cec05c";
-            hash = "sha256-vCY/H1fBKg5401mTldvRYnaMHkgJ+uIyEMfGE40WbvM=";
-          };
-        in
-        pkgs.clorinde.overrideAttrs (old: {
-          version = "1.4.1-git-e7354d2";
-          inherit src;
-          cargoDeps = pkgs.rustPlatform.fetchCargoVendor {
-            name = "clorinde-1.4.1-git-vendor";
-            inherit src;
-            hash = "sha256-Idrn6VEOk1ByDaHrzZRI3qUC5IMlnCRROrEyQ7O47so=";
-          };
-          # `clorinde --version` still prints 1.4.1 — Cargo.toml not bumped on main.
-          doInstallCheck = false;
-        });
     in
     {
       # Named `rampart`, not `default`: ~/dotfiles auto-imports every input's
@@ -102,7 +70,7 @@
               pkgs.postgresql_16
               pkgs.cargo-watch
               pkgs.swaks
-              (clorindeFor system)
+              pkgs.cornucopia
             ];
             # Default to a local-socket dev DB so DB-backed tests don't
             # silently skip. Operator creates it once: `createdb rampart_test`.
@@ -119,7 +87,6 @@
         system:
         let
           pkgs = pkgsFor system;
-          clorinde = clorindeFor system;
         in
         {
           codegen-up-to-date =
@@ -128,9 +95,9 @@
                 nativeBuildInputs = [
                   pkgs.postgresql_16
                   pkgs.diffutils
-                  clorinde
+                  pkgs.cornucopia
                 ]
-                # clorinde reformats output via rustfmt-on-PATH; without
+                # Cornucopia reformats output via rustfmt-on-PATH; without
                 # it the check emits unformatted output and false-positives.
                 ++ toolchainFor system;
               }
@@ -150,15 +117,15 @@
 
                 mkdir -p "$TMPDIR/work"
                 cp -r ${./queries} "$TMPDIR/work/queries"
-                cp ${./clorinde.toml} "$TMPDIR/work/clorinde.toml"
-                (cd "$TMPDIR/work" && clorinde live "host=$PGHOST dbname=rampart_check")
+                cp ${./cornucopia.toml} "$TMPDIR/work/cornucopia.toml"
+                (cd "$TMPDIR/work" && cornucopia live "host=$PGHOST dbname=rampart_check")
                 pg_ctl -D "$PGDATA" stop -m fast >/dev/null
 
                 if ! diff -ru ${./db/rampart-codegen} "$TMPDIR/work/db/rampart-codegen"; then
                   echo ""
                   echo "ERROR: db/rampart-codegen/ is out of date relative to queries/*.sql + migrations/."
                   echo "Regenerate by running, from a dev shell:"
-                  echo "  clorinde live \"\$RAMPART_TEST_DB_URL\""
+                  echo "  cornucopia live \"\$RAMPART_TEST_DB_URL\""
                   echo "and commit the resulting db/rampart-codegen/ tree."
                   exit 1
                 fi

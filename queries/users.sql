@@ -1,5 +1,5 @@
 -- User row CRUD + password ops + admin counts.
--- Nullability annotations: clorinde defaults to non-null for every
+-- Nullability annotations: Cornucopia defaults to non-null for every
 -- column, so nullable columns are explicitly listed via `(col?)`.
 
 --! by_id_with_pwhash : (password_hash?)

@@ -1,7 +1,7 @@
-# Clorinde generates a separate Rust crate at `db/rampart-codegen` from the
-# .sql files in `queries/`. Run `clorinde live "$RAMPART_TEST_DB_URL"` to
+# Cornucopia generates a separate Rust crate at `db/rampart-codegen` from the
+# .sql files in `queries/`. Run `cornucopia live "$RAMPART_TEST_DB_URL"` to
 # regenerate after schema or query changes; the resulting crate is
-# committed and consumed via `clorinde = { path = "db/rampart-codegen" }`
+# committed and consumed via `rampart-codegen = { path = "db/rampart-codegen" }`
 # in the main Cargo.toml.
 
 destination = "db/rampart-codegen"
@@ -32,7 +32,7 @@ publish = false
 [manifest.dependencies]
 time = { version = "0.3", features = ["serde", "serde-well-known"] }
 serde = { version = "1", features = ["derive"] }
-# Override clorinde's chrono default. Our type mapper sends TIMESTAMPTZ
+# Override Cornucopia's chrono default. Our type mapper sends TIMESTAMPTZ
 # to time::OffsetDateTime, so the postgres clients need the matching
 # with-time-0_3 feature to know how to bind that type.
 tokio-postgres = {

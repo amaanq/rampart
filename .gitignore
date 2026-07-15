@@ -7,10 +7,16 @@
 !Cargo.lock
 !Cargo.toml
 !README.md
-!clorinde.toml
+!cornucopia.toml
 !flake.lock
 !flake.nix
 !rust-toolchain.toml
+
+# Tack-managed Nix inputs
+!.tack/
+!.tack/default.nix
+!.tack/pins.toml
+!.tack/pins.lock.json
 
 # Source
 !src/
@@ -26,7 +32,7 @@
 !queries/
 !queries/**
 
-# clorinde-generated codegen — committed for reproducible builds.
+# Cornucopia-generated codegen — committed for reproducible builds.
 # target/ and Cargo.lock inside stay out via the "*" default.
 !db/
 !db/rampart-codegen/

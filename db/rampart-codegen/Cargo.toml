@@ -1,9 +1,10 @@
-# This file was generated with `clorinde`. Do not modify.
+# This file was generated with `cornucopia`. Do not modify.
 
 [package]
 name = "rampart-codegen"
 version = "0.0.0"
-edition = "2021"
+edition = "2024"
+rust-version = "1.85"
 publish = false
 
 [dependencies.chrono]

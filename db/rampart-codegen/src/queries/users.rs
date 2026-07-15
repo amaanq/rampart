@@ -1,4 +1,4 @@
-// This file was generated with `clorinde`. Do not modify.
+// This file was generated with `cornucopia`. Do not modify.
 
 #[derive(Clone, Copy, Debug)]
 pub struct EmailExistsForOtherParams<T1: crate::StringSql> {
