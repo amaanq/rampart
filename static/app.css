@@ -284,3 +284,42 @@ code {
     font-size: .95em;
     white-space: pre-wrap;
 }
+
+@media (max-width: 700px) {
+    header {
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: .75rem 1rem;
+        padding: .875rem 1rem 0;
+    }
+    header h1 { grid-column: 1; grid-row: 1; }
+    .user-menu {
+        grid-column: 2;
+        grid-row: 1;
+        justify-self: end;
+        min-width: 0;
+        margin-left: 0;
+    }
+    .user-menu summary {
+        max-width: calc(100vw - 8rem);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    nav {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        gap: 1rem;
+        overflow-x: auto;
+        padding: 0 0 .75rem;
+        scrollbar-width: none;
+    }
+    nav::-webkit-scrollbar { display: none; }
+    main:not(.auth) { margin: 1.25rem auto; padding: 0 .75rem; }
+    table {
+        display: block;
+        max-width: 100%;
+        overflow-x: auto;
+    }
+    input, select { min-width: 0; max-width: 100%; }
+}
