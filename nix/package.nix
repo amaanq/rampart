@@ -5,6 +5,7 @@
   lib,
   rustPlatform,
   pkg-config,
+  patchelf,
   openssl,
 }:
 
@@ -14,8 +15,14 @@ rustPlatform.buildRustPackage {
   src = lib.cleanSource ../.;
   cargoLock.lockFile = ../Cargo.lock;
 
-  nativeBuildInputs = [ pkg-config ];
-  buildInputs = [ openssl ];
+  nativeBuildInputs = [
+    pkg-config
+    patchelf
+  ];
+  buildInputs = [
+    openssl.dev
+    openssl.out
+  ];
 
   doCheck = false;
 
@@ -24,6 +31,10 @@ rustPlatform.buildRustPackage {
   postInstall = ''
     mkdir -p $out/share/rampart
     cp -r ${../static} $out/share/rampart/static
+  '';
+
+  postFixup = ''
+    patchelf --add-rpath ${lib.makeLibraryPath [ openssl.out ]} $out/bin/rampart
   '';
 
   meta = {

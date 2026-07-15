@@ -77,6 +77,7 @@
             shellHook = ''
               : "''${RAMPART_TEST_DB_URL:=host=/tmp dbname=rampart_test}"
               export RAMPART_TEST_DB_URL
+              export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.openssl ]}:''${LD_LIBRARY_PATH:-}"
             '';
           };
         }

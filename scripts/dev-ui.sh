@@ -11,7 +11,7 @@ cd "$PROJECT_ROOT"
 
 export RAMPART_LISTEN="${RAMPART_LISTEN:-127.0.0.1:8090}"
 
-echo "starting preview server on http://$RAMPART_LISTEN)"
+echo "starting preview server on http://$RAMPART_LISTEN"
 echo ""
 
 exec cargo watch -x 'run -- preview'
