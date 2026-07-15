@@ -13,27 +13,38 @@
 <section>
     <h2>your mailboxes</h2>
     <table>
-        <thead><tr><th>email</th><th>name</th><th>verified</th><th>enabled</th><th>aliases</th><th></th></tr></thead>
+        <thead><tr><th>email</th><th>name</th><th>verified</th><th class="status-cell">enabled</th><th>aliases</th><th></th></tr></thead>
         <tbody>
         {%- for m in mailboxes %}
             <tr>
                 <td>{{ m.email }}</td>
                 <td>{{ m.display_name.as_deref().unwrap_or("") }}</td>
                 <td>{% if m.verified %}<span class="ok">verified</span>{% else %}<span class="warn">unverified</span>{% endif %}</td>
-                <td>{{ m.enabled }}</td>
+                <td class="status-cell">
+                    {% if m.enabled %}
+                    <span class="status-dot is-enabled" role="img" aria-label="Enabled" title="Enabled"></span>
+                    {% else %}
+                    <span class="status-dot is-disabled" role="img" aria-label="Disabled" title="Disabled"></span>
+                    {% endif %}
+                </td>
                 <td>{{ m.nb_alias }}</td>
                 <td>
+                    <div class="mailbox-actions">
                 {%- if !m.verified %}
-                    <button hx-post="/api/v1/mailbox/{{ m.id }}/resend-verify" class="secondary">resend verify</button>
+                    <button hx-post="/api/v1/mailbox/{{ m.id }}/resend-verify"
+                            class="secondary mailbox-action-verify">resend verify</button>
                 {%- endif %}
                     <button hx-patch="/api/v1/mailbox/{{ m.id }}"
                             hx-ext="json-enc"
                             hx-vals='{"enabled": {% if m.enabled %}false{% else %}true{% endif %}}'
-                            class="secondary">
+                            class="secondary mailbox-action-toggle">
                         {% if m.enabled %}disable{% else %}enable{% endif %}
                     </button>
-                    <button hx-delete="/api/v1/mailbox/{{ m.id }}"
-                            hx-confirm="delete {{ m.email }}? aliases pointing at this mailbox must be reassigned or deleted first.">×</button>
+                    <button class="danger mailbox-action-delete"
+                            aria-label="Delete mailbox {{ m.email }}"
+                            hx-delete="/api/v1/mailbox/{{ m.id }}"
+                            hx-confirm="delete {{ m.email }}? aliases pointing at this mailbox must be reassigned or deleted first.">delete</button>
+                    </div>
                 </td>
             </tr>
         {%- endfor %}

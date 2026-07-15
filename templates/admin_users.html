@@ -5,24 +5,31 @@
     <h2>users</h2>
     <table>
         <thead>
-            <tr><th>id</th><th>email</th><th>admin</th><th>enabled</th><th>aliases</th><th>domains</th><th>created</th><th></th></tr>
+            <tr><th>id</th><th>email</th><th>admin</th><th class="status-cell">enabled</th><th>aliases</th><th>domains</th><th>created</th><th></th></tr>
         </thead>
         <tbody>
         {%- for u in users %}
             <tr class="{% if !u.enabled %}disabled{% endif %}">
                 <td>{{ u.id }}</td>
                 <td>{{ u.email }}</td>
-                <td>{{ u.is_admin }}</td>
-                <td>{{ u.enabled }}</td>
+                <td>{% if u.is_admin %}admin{% else %}user{% endif %}</td>
+                <td class="status-cell">
+                    {% if u.enabled %}
+                    <span class="status-dot is-enabled" role="img" aria-label="Enabled" title="Enabled"></span>
+                    {% else %}
+                    <span class="status-dot is-disabled" role="img" aria-label="Disabled" title="Disabled"></span>
+                    {% endif %}
+                </td>
                 <td>{{ u.nb_aliases }}</td>
                 <td>{{ u.nb_domains }}</td>
                 <td>{{ u.created_at }}</td>
                 <td>
                     {% if u.enabled %}
-                    <button hx-put="/api/v1/admin/users/{{ u.id }}/disable"
+                    <button class="danger"
+                            hx-put="/api/v1/admin/users/{{ u.id }}/disable"
                             hx-confirm="disable {{ u.email }}? (sessions + api keys revoked, aliases disabled)">disable</button>
                     {% else %}
-                    <button hx-put="/api/v1/admin/users/{{ u.id }}/enable">enable</button>
+                    <button class="secondary" hx-put="/api/v1/admin/users/{{ u.id }}/enable">enable</button>
                     {% endif %}
                 </td>
             </tr>

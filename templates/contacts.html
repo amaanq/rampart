@@ -37,6 +37,7 @@
                 <td>
                     <button hx-patch="/api/v1/contacts/{{ c.id }}"
                             hx-ext="json-enc"
+                            class="secondary"
                             hx-vals='{"enabled": {% if c.enabled %}false{% else %}true{% endif %}}'>
                         {% if c.enabled %}disable{% else %}enable{% endif %}
                     </button>
@@ -44,14 +45,17 @@
                 <td>
                     <button hx-patch="/api/v1/contacts/{{ c.id }}"
                             hx-ext="json-enc"
+                            class="secondary"
                             hx-vals='{"block_reply": {% if c.block_reply %}false{% else %}true{% endif %}}'>
                         {% if c.block_reply %}unblock{% else %}block{% endif %}
                     </button>
                 </td>
                 <td>{% if let Some(t) = c.last_seen_at %}{{ t }}{% endif %}</td>
                 <td>
-                    <button hx-delete="/api/v1/contacts/{{ c.id }}"
-                            hx-confirm="delete contact {{ c.real_email }}?">&times;</button>
+                    <button class="danger"
+                            aria-label="Delete contact {{ c.real_email }}"
+                            hx-delete="/api/v1/contacts/{{ c.id }}"
+                            hx-confirm="delete contact {{ c.real_email }}?">delete</button>
                 </td>
             </tr>
         {%- endfor %}

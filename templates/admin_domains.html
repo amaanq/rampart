@@ -13,7 +13,7 @@
                 <td>{{ d.id }}</td>
                 <td>{{ d.domain }}</td>
                 <td>{{ d.owner_email.as_deref().unwrap_or("(none)") }}</td>
-                <td>{{ d.shared }}</td>
+                <td>{% if d.shared %}shared{% else %}private{% endif %}</td>
                 <td>{{ d.nb_alias }}</td>
                 <td>
                     {% if d.shared %}

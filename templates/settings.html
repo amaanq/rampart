@@ -35,8 +35,10 @@
                 <td>{{ k.name }}</td>
                 <td>{{ k.created_at }}</td>
                 <td>{% if let Some(t) = k.last_used_at %}{{ t }}{% else %}never{% endif %}</td>
-                <td><button hx-delete="/api/v1/user/webauthn/credentials/{{ k.id }}"
-                            hx-confirm="delete passkey {{ k.name }}?">×</button></td>
+                <td><button class="danger"
+                            aria-label="Delete passkey {{ k.name }}"
+                            hx-delete="/api/v1/user/webauthn/credentials/{{ k.id }}"
+                            hx-confirm="delete passkey {{ k.name }}?">delete</button></td>
             </tr>
         {%- endfor %}
         </tbody>

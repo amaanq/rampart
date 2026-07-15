@@ -9,12 +9,15 @@
         &middot;
         <a href="/aliases/{{ a.id }}/activity">activity</a>
         &middot;
-        <button hx-put="/api/v1/aliases/{{ a.id }}/toggle"
+        <button class="secondary"
+                hx-put="/api/v1/aliases/{{ a.id }}/toggle"
 >
             {% if a.enabled %}disable{% else %}enable{% endif %}
         </button>
-        <button hx-delete="/api/v1/aliases/{{ a.id }}"
+        <button class="danger"
+                aria-label="Delete alias {{ a.address }}"
+                hx-delete="/api/v1/aliases/{{ a.id }}"
                 hx-confirm="delete {{ a.address }}?"
->×</button>
+>delete</button>
     </td>
 </tr>
