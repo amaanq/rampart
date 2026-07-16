@@ -577,6 +577,10 @@ async fn email_change() -> StatusCode {
     StatusCode::ACCEPTED
 }
 
+async fn verification_sent() -> StatusCode {
+    StatusCode::ACCEPTED
+}
+
 async fn deleted() -> StatusCode {
     StatusCode::NO_CONTENT
 }
@@ -608,6 +612,10 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/api/v1/aliases/{id}/toggle", put(updated))
         .route("/api/v1/mailbox/{id}", patch(updated))
         .route("/api/v1/mailbox/{id}", delete(deleted))
+        .route(
+            "/api/v1/mailbox/{id}/resend-verify",
+            post(verification_sent),
+        )
         .route("/api/v1/contacts/{id}", patch(updated))
         .route("/api/v1/contacts/{id}", delete(deleted))
         .route("/api/v1/user/webauthn/credentials/{id}", delete(deleted))

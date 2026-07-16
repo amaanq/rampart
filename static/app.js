@@ -83,6 +83,12 @@ function updateBooleanToggle(trigger) {
     status.title = statusLabel;
 }
 
+function completeRequestTrigger(trigger) {
+    if (!trigger || !trigger.dataset || !trigger.dataset.successLabel) return;
+    trigger.textContent = trigger.dataset.successLabel;
+    if (trigger.hasAttribute('data-disable-on-success')) trigger.disabled = true;
+}
+
 document.body.addEventListener('htmx:beforeRequest', function (e) {
     const form = requestForm(e);
     if (!form || !form.dataset.success) return;
@@ -102,6 +108,7 @@ document.body.addEventListener('htmx:afterRequest', function (e) {
     removeRequestTarget(t);
     toggleRequestTarget(t);
     updateBooleanToggle(t);
+    completeRequestTrigger(t);
     if (t && t.dataset && t.dataset.reload === 'no') return;
     location.reload();
 });

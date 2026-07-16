@@ -32,6 +32,11 @@
                     <div class="mailbox-actions">
                 {%- if !m.verified %}
                     <button hx-post="/api/v1/mailbox/{{ m.id }}/resend-verify"
+                            hx-disabled-elt="this"
+                            data-reload="no"
+                            data-success-label="sent"
+                            data-disable-on-success
+                            aria-live="polite"
                             class="secondary mailbox-action-verify">resend verify</button>
                 {%- endif %}
                     <button hx-patch="/api/v1/mailbox/{{ m.id }}"
