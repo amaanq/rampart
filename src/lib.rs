@@ -7,6 +7,7 @@ mod api;
 mod error;
 mod quota;
 mod sieve;
+mod template_filters;
 mod web;
 mod webauthn;
 

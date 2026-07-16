@@ -16,6 +16,7 @@ use time::OffsetDateTime;
 use crate::AppState;
 use crate::auth::{self, AdminPrincipal, Principal};
 use crate::error::{ApiError, ApiResult};
+use crate::template_filters as filters;
 
 pub fn router() -> Router<AppState> {
     let admin_routes = Router::new()

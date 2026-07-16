@@ -11,6 +11,7 @@ use time::Duration;
 use time::OffsetDateTime;
 use tower_http::services::ServeDir;
 
+use crate::template_filters as filters;
 use crate::web::{AliasRowView, DomainRowView, MailboxSummaryView};
 use rampart_codegen::queries::{
     contacts as cq, domains as dq, email_log as elq, mailboxes as mbq, users as uq, webauthn as wq,

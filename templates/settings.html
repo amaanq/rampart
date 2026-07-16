@@ -37,8 +37,8 @@
         {%- for k in passkeys %}
             <tr>
                 <td>{{ k.name }}</td>
-                <td>{{ k.created_at }}</td>
-                <td>{% if let Some(t) = k.last_used_at %}{{ t }}{% else %}never{% endif %}</td>
+                <td><time class="timestamp" datetime="{{ k.created_at|datetime_attribute }}">{{ k.created_at|ui_datetime }}</time></td>
+                <td>{% if let Some(t) = k.last_used_at %}<time class="timestamp" datetime="{{ t|datetime_attribute }}">{{ t|ui_datetime }}</time>{% else %}never{% endif %}</td>
                 <td><button class="danger"
                             aria-label="Delete passkey {{ k.name }}"
                             hx-delete="/api/v1/user/webauthn/credentials/{{ k.id }}"

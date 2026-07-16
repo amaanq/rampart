@@ -50,7 +50,7 @@
                         {% if c.block_reply %}unblock{% else %}block{% endif %}
                     </button>
                 </td>
-                <td>{% if let Some(t) = c.last_seen_at %}{{ t }}{% endif %}</td>
+                <td>{% if let Some(t) = c.last_seen_at %}<time class="timestamp" datetime="{{ t|datetime_attribute }}">{{ t|ui_datetime }}</time>{% endif %}</td>
                 <td>
                     <button class="danger"
                             aria-label="Delete contact {{ c.real_email }}"

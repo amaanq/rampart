@@ -3,24 +3,24 @@
     <td>{{ a.mailbox.email }}</td>
     <td>{{ a.note.as_deref().unwrap_or("") }}</td>
     <td>{{ a.nb_forward }}</td>
-    <td>{% if let Some(t) = a.last_email_at %}{{ t }}{% endif %}</td>
+    <td>{% if let Some(t) = a.last_email_at %}<time class="timestamp" datetime="{{ t|datetime_attribute }}">{{ t|ui_datetime }}</time>{% endif %}</td>
     <td>
-        <a href="/aliases/{{ a.id }}/contacts">contacts</a>
-        &middot;
-        <a href="/aliases/{{ a.id }}/activity">activity</a>
-        &middot;
-        <button class="secondary"
-                hx-put="/api/v1/aliases/{{ a.id }}/toggle"
+        <div class="alias-actions">
+            <a class="alias-action-link" href="/aliases/{{ a.id }}/contacts">contacts</a>
+            <a class="alias-action-link" href="/aliases/{{ a.id }}/activity">activity</a>
+            <button class="secondary"
+                    hx-put="/api/v1/aliases/{{ a.id }}/toggle"
 >
-            {% if a.enabled %}disable{% else %}enable{% endif %}
-        </button>
-        <button class="danger"
-                aria-label="Delete alias {{ a.address }}"
-                hx-delete="/api/v1/aliases/{{ a.id }}"
-                data-reload="no"
-                data-remove-closest="tr"
-                data-count-target="#alias-count"
-                hx-confirm="delete {{ a.address }}?"
+                {% if a.enabled %}disable{% else %}enable{% endif %}
+            </button>
+            <button class="danger"
+                    aria-label="Delete alias {{ a.address }}"
+                    hx-delete="/api/v1/aliases/{{ a.id }}"
+                    data-reload="no"
+                    data-remove-closest="tr"
+                    data-count-target="#alias-count"
+                    hx-confirm="delete {{ a.address }}?"
 >delete</button>
+        </div>
     </td>
 </tr>

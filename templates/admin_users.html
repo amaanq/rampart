@@ -22,7 +22,7 @@
                 </td>
                 <td>{{ u.nb_aliases }}</td>
                 <td>{{ u.nb_domains }}</td>
-                <td>{{ u.created_at }}</td>
+                <td><time class="timestamp" datetime="{{ u.created_at|datetime_attribute }}">{{ u.created_at|ui_datetime }}</time></td>
                 <td>
                     {% if u.enabled %}
                     <button class="danger"

@@ -295,6 +295,37 @@ td button {
     padding: .3rem .55rem;
     font-size: .85rem;
 }
+.alias-actions {
+    display: flex;
+    align-items: center;
+    gap: .35rem;
+    white-space: nowrap;
+}
+.alias-action-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 1.875rem;
+    padding: .3rem .55rem;
+    color: var(--fg);
+    background: #f5f5f5;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font: inherit;
+    font-size: .85rem;
+    font-weight: 500;
+    line-height: 1;
+    text-decoration: none;
+    transition: background-color .12s, border-color .12s, color .12s;
+}
+.alias-action-link:hover {
+    background: #eaeaea;
+    border-color: #c7c7c7;
+}
+.alias-action-link:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
 .mailbox-actions {
     display: grid;
     grid-template-columns: 7rem 4.5rem max-content;
@@ -318,6 +349,10 @@ td button {
     background: transparent;
 }
 .status-cell { text-align: center; vertical-align: middle; }
+.timestamp {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
 
 table {
     width: 100%;

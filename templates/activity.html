@@ -22,7 +22,7 @@
         <tbody>
         {%- for a in activities %}
             <tr>
-                <td>{{ a.created_at }}</td>
+                <td><time class="timestamp" datetime="{{ a.created_at|datetime_attribute }}">{{ a.created_at|ui_datetime }}</time></td>
                 <td>{{ a.action }}</td>
                 <td>{{ a.from_address.as_deref().unwrap_or("") }}</td>
                 <td>{{ a.reason.as_deref().unwrap_or("") }}</td>
