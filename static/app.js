@@ -25,6 +25,19 @@ function showFormStatus(form, message, isError) {
     return true;
 }
 
+function removeRequestTarget(trigger) {
+    if (!trigger || !trigger.dataset || !trigger.dataset.removeClosest) return;
+    const target = trigger.closest(trigger.dataset.removeClosest);
+    if (!target) return;
+    const count = trigger.dataset.countTarget
+        ? document.querySelector(trigger.dataset.countTarget)
+        : null;
+    target.remove();
+    if (!count) return;
+    const value = Number.parseInt(count.textContent, 10);
+    if (Number.isFinite(value)) count.textContent = String(Math.max(0, value - 1));
+}
+
 document.body.addEventListener('htmx:beforeRequest', function (e) {
     const form = requestForm(e);
     if (!form || !form.dataset.success) return;
@@ -41,6 +54,7 @@ document.body.addEventListener('htmx:afterRequest', function (e) {
         if (form.hasAttribute('data-reset-on-success')) form.reset();
     }
     const t = e.detail.elt;
+    removeRequestTarget(t);
     if (t && t.dataset && t.dataset.reload === 'no') return;
     location.reload();
 });

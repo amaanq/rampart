@@ -55,6 +55,8 @@
                     <button class="danger"
                             aria-label="Delete contact {{ c.real_email }}"
                             hx-delete="/api/v1/contacts/{{ c.id }}"
+                            data-reload="no"
+                            data-remove-closest="tr"
                             hx-confirm="delete contact {{ c.real_email }}?">delete</button>
                 </td>
             </tr>
