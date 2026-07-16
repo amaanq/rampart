@@ -50,6 +50,30 @@ function toggleRequestTarget(trigger) {
     if (label) trigger.textContent = label;
 }
 
+function updateMailboxToggle(trigger) {
+    if (!trigger || !trigger.hasAttribute('data-mailbox-toggle')) return;
+    let enabled;
+    try {
+        enabled = JSON.parse(trigger.getAttribute('hx-vals')).enabled;
+    } catch (_) {
+        location.reload();
+        return;
+    }
+    const row = trigger.closest('tr');
+    const status = row && row.querySelector('.status-dot');
+    if (typeof enabled !== 'boolean' || !status) {
+        location.reload();
+        return;
+    }
+    const label = enabled ? 'Enabled' : 'Disabled';
+    status.classList.toggle('is-enabled', enabled);
+    status.classList.toggle('is-disabled', !enabled);
+    status.setAttribute('aria-label', label);
+    status.title = label;
+    trigger.textContent = enabled ? 'disable' : 'enable';
+    trigger.setAttribute('hx-vals', JSON.stringify({enabled: !enabled}));
+}
+
 document.body.addEventListener('htmx:beforeRequest', function (e) {
     const form = requestForm(e);
     if (!form || !form.dataset.success) return;
@@ -68,6 +92,7 @@ document.body.addEventListener('htmx:afterRequest', function (e) {
     const t = e.detail.elt;
     removeRequestTarget(t);
     toggleRequestTarget(t);
+    updateMailboxToggle(t);
     if (t && t.dataset && t.dataset.reload === 'no') return;
     location.reload();
 });

@@ -16,7 +16,7 @@
         <thead><tr><th>email</th><th>name</th><th>verified</th><th class="status-cell">enabled</th><th>aliases</th><th></th></tr></thead>
         <tbody>
         {%- for m in mailboxes %}
-            <tr>
+            <tr class="{% if !m.enabled %}disabled{% endif %}">
                 <td>{{ m.email }}</td>
                 <td>{{ m.display_name.as_deref().unwrap_or("") }}</td>
                 <td>{% if m.verified %}<span class="ok">verified</span>{% else %}<span class="warn">unverified</span>{% endif %}</td>
@@ -37,6 +37,11 @@
                     <button hx-patch="/api/v1/mailbox/{{ m.id }}"
                             hx-ext="json-enc"
                             hx-vals='{"enabled": {% if m.enabled %}false{% else %}true{% endif %}}'
+                            hx-disabled-elt="this"
+                            data-reload="no"
+                            data-mailbox-toggle
+                            data-toggle-closest="tr"
+                            data-toggle-class="disabled"
                             class="secondary mailbox-action-toggle">
                         {% if m.enabled %}disable{% else %}enable{% endif %}
                     </button>

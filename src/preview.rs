@@ -4,7 +4,7 @@ use axum::{
     extract::Path,
     http::StatusCode,
     response::{Html, IntoResponse, Response},
-    routing::{delete, get, post, put},
+    routing::{delete, get, patch, post, put},
 };
 use std::net::SocketAddr;
 use time::Duration;
@@ -606,6 +606,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/api/v1/user/email", post(email_change))
         .route("/api/v1/aliases/{id}", delete(deleted))
         .route("/api/v1/aliases/{id}/toggle", put(updated))
+        .route("/api/v1/mailbox/{id}", patch(updated))
         .route("/api/v1/mailbox/{id}", delete(deleted))
         .route("/api/v1/contacts/{id}", delete(deleted))
         .route("/api/v1/user/webauthn/credentials/{id}", delete(deleted))
