@@ -295,6 +295,10 @@ td button {
     padding: .3rem .55rem;
     font-size: .85rem;
 }
+.contact-toggle-cell {
+    width: 6.75rem;
+    white-space: nowrap;
+}
 .alias-actions {
     display: flex;
     align-items: center;

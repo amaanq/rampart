@@ -608,6 +608,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/api/v1/aliases/{id}/toggle", put(updated))
         .route("/api/v1/mailbox/{id}", patch(updated))
         .route("/api/v1/mailbox/{id}", delete(deleted))
+        .route("/api/v1/contacts/{id}", patch(updated))
         .route("/api/v1/contacts/{id}", delete(deleted))
         .route("/api/v1/user/webauthn/credentials/{id}", delete(deleted))
         .route("/healthz", get(healthz))

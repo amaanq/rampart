@@ -22,8 +22,8 @@
                 <th>real email</th>
                 <th>reply address</th>
                 <th>display name</th>
-                <th>enabled</th>
-                <th>block reply</th>
+                <th class="contact-toggle-cell">enabled</th>
+                <th class="contact-toggle-cell">block reply</th>
                 <th>last seen</th>
                 <th></th>
             </tr>
@@ -34,18 +34,30 @@
                 <td>{{ c.real_email }}</td>
                 <td><code>{{ c.reply_address }}</code></td>
                 <td>{{ c.display_name.as_deref().unwrap_or("") }}</td>
-                <td>
+                <td class="contact-toggle-cell">
                     <button hx-patch="/api/v1/contacts/{{ c.id }}"
                             hx-ext="json-enc"
                             class="secondary"
+                            hx-disabled-elt="this"
+                            data-reload="no"
+                            data-boolean-toggle="enabled"
+                            data-label-true="disable"
+                            data-label-false="enable"
+                            data-toggle-closest="tr"
+                            data-toggle-class="disabled"
                             hx-vals='{"enabled": {% if c.enabled %}false{% else %}true{% endif %}}'>
                         {% if c.enabled %}disable{% else %}enable{% endif %}
                     </button>
                 </td>
-                <td>
+                <td class="contact-toggle-cell">
                     <button hx-patch="/api/v1/contacts/{{ c.id }}"
                             hx-ext="json-enc"
                             class="secondary"
+                            hx-disabled-elt="this"
+                            data-reload="no"
+                            data-boolean-toggle="block_reply"
+                            data-label-true="unblock"
+                            data-label-false="block"
                             hx-vals='{"block_reply": {% if c.block_reply %}false{% else %}true{% endif %}}'>
                         {% if c.block_reply %}unblock{% else %}block{% endif %}
                     </button>

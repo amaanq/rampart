@@ -39,7 +39,10 @@
                             hx-vals='{"enabled": {% if m.enabled %}false{% else %}true{% endif %}}'
                             hx-disabled-elt="this"
                             data-reload="no"
-                            data-mailbox-toggle
+                            data-boolean-toggle="enabled"
+                            data-label-true="disable"
+                            data-label-false="enable"
+                            data-status-target=".status-dot"
                             data-toggle-closest="tr"
                             data-toggle-class="disabled"
                             class="secondary mailbox-action-toggle">

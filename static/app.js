@@ -50,28 +50,37 @@ function toggleRequestTarget(trigger) {
     if (label) trigger.textContent = label;
 }
 
-function updateMailboxToggle(trigger) {
-    if (!trigger || !trigger.hasAttribute('data-mailbox-toggle')) return;
-    let enabled;
+function updateBooleanToggle(trigger) {
+    if (!trigger || !trigger.dataset || !trigger.dataset.booleanToggle) return;
+    const property = trigger.dataset.booleanToggle;
+    let value;
     try {
-        enabled = JSON.parse(trigger.getAttribute('hx-vals')).enabled;
+        value = JSON.parse(trigger.getAttribute('hx-vals'))[property];
     } catch (_) {
         location.reload();
         return;
     }
-    const row = trigger.closest('tr');
-    const status = row && row.querySelector('.status-dot');
-    if (typeof enabled !== 'boolean' || !status) {
+    if (typeof value !== 'boolean') {
         location.reload();
         return;
     }
-    const label = enabled ? 'Enabled' : 'Disabled';
-    status.classList.toggle('is-enabled', enabled);
-    status.classList.toggle('is-disabled', !enabled);
-    status.setAttribute('aria-label', label);
-    status.title = label;
-    trigger.textContent = enabled ? 'disable' : 'enable';
-    trigger.setAttribute('hx-vals', JSON.stringify({enabled: !enabled}));
+    const buttonLabel = value ? trigger.dataset.labelTrue : trigger.dataset.labelFalse;
+    if (buttonLabel) trigger.textContent = buttonLabel;
+    trigger.setAttribute('hx-vals', JSON.stringify({[property]: !value}));
+
+    const statusSelector = trigger.dataset.statusTarget;
+    if (!statusSelector) return;
+    const row = trigger.closest('tr');
+    const status = row && row.querySelector(statusSelector);
+    if (!status) {
+        location.reload();
+        return;
+    }
+    const statusLabel = value ? 'Enabled' : 'Disabled';
+    status.classList.toggle('is-enabled', value);
+    status.classList.toggle('is-disabled', !value);
+    status.setAttribute('aria-label', statusLabel);
+    status.title = statusLabel;
 }
 
 document.body.addEventListener('htmx:beforeRequest', function (e) {
@@ -92,7 +101,7 @@ document.body.addEventListener('htmx:afterRequest', function (e) {
     const t = e.detail.elt;
     removeRequestTarget(t);
     toggleRequestTarget(t);
-    updateMailboxToggle(t);
+    updateBooleanToggle(t);
     if (t && t.dataset && t.dataset.reload === 'no') return;
     location.reload();
 });
