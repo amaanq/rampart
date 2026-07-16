@@ -365,7 +365,7 @@ table {
 th, td { padding: .6em 1em; text-align: left; }
 th { background: #f0f0f0; font-size: .85em; color: var(--muted); font-weight: 600; }
 tr { border-top: 1px solid var(--border); }
-tr.disabled { opacity: .5; }
+tr.disabled { color: var(--muted); }
 tr.disabled code { text-decoration: line-through; }
 
 code {

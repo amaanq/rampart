@@ -4,7 +4,7 @@ use axum::{
     extract::Path,
     http::StatusCode,
     response::{Html, IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
 };
 use std::net::SocketAddr;
 use time::Duration;
@@ -581,6 +581,10 @@ async fn deleted() -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
+async fn updated() -> StatusCode {
+    StatusCode::NO_CONTENT
+}
+
 pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/login", get(login_page))
@@ -601,6 +605,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/api/v1/user/password", post(password_change))
         .route("/api/v1/user/email", post(email_change))
         .route("/api/v1/aliases/{id}", delete(deleted))
+        .route("/api/v1/aliases/{id}/toggle", put(updated))
         .route("/api/v1/mailbox/{id}", delete(deleted))
         .route("/api/v1/contacts/{id}", delete(deleted))
         .route("/api/v1/user/webauthn/credentials/{id}", delete(deleted))

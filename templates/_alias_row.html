@@ -10,6 +10,12 @@
             <a class="alias-action-link" href="/aliases/{{ a.id }}/activity">activity</a>
             <button class="secondary"
                     hx-put="/api/v1/aliases/{{ a.id }}/toggle"
+                    hx-disabled-elt="this"
+                    data-reload="no"
+                    data-toggle-closest="tr"
+                    data-toggle-class="disabled"
+                    data-label-with-class="enable"
+                    data-label-without-class="disable"
 >
                 {% if a.enabled %}disable{% else %}enable{% endif %}
             </button>

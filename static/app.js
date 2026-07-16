@@ -38,6 +38,18 @@ function removeRequestTarget(trigger) {
     if (Number.isFinite(value)) count.textContent = String(Math.max(0, value - 1));
 }
 
+function toggleRequestTarget(trigger) {
+    if (!trigger || !trigger.dataset) return;
+    const selector = trigger.dataset.toggleClosest;
+    const className = trigger.dataset.toggleClass;
+    if (!selector || !className) return;
+    const target = trigger.closest(selector);
+    if (!target) return;
+    const isSet = target.classList.toggle(className);
+    const label = isSet ? trigger.dataset.labelWithClass : trigger.dataset.labelWithoutClass;
+    if (label) trigger.textContent = label;
+}
+
 document.body.addEventListener('htmx:beforeRequest', function (e) {
     const form = requestForm(e);
     if (!form || !form.dataset.success) return;
@@ -55,6 +67,7 @@ document.body.addEventListener('htmx:afterRequest', function (e) {
     }
     const t = e.detail.elt;
     removeRequestTarget(t);
+    toggleRequestTarget(t);
     if (t && t.dataset && t.dataset.reload === 'no') return;
     location.reload();
 });
