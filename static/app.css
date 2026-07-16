@@ -27,6 +27,13 @@ header h1 a { color: var(--fg); text-decoration: none; }
 nav { display: flex; align-items: center; gap: 1em; }
 nav a { color: var(--muted); text-decoration: none; }
 nav a:hover { color: var(--accent); }
+nav a[aria-current="page"] {
+    color: var(--fg);
+    text-decoration: underline;
+    text-decoration-color: var(--accent);
+    text-decoration-thickness: 2px;
+    text-underline-offset: .35em;
+}
 
 /* User menu: <details>/<summary> dropdown (CSP-safe, no JS).
    Anchored top-right via margin-left:auto. */
@@ -67,6 +74,7 @@ nav a:hover { color: var(--accent); }
     text-decoration: none;
 }
 .user-menu-panel a:hover { background: var(--bg); color: var(--accent); }
+.user-menu-panel a[aria-current="page"] { background: var(--bg); color: var(--fg); }
 .user-menu-section-label {
     display: block;
     padding: .5em 1em .2em;

@@ -4,6 +4,25 @@ function requestForm(e) {
     return elt.matches('form') ? elt : elt.closest('form');
 }
 
+function markCurrentNavigation() {
+    const path = location.pathname;
+    let href = null;
+    let scope = 'header nav';
+    if (path === '/' || path.startsWith('/aliases/')) {
+        href = '/';
+    } else if (path === '/mailboxes' || path === '/domains' || path === '/settings') {
+        href = path;
+    } else if (path === '/admin/users' || path === '/admin/domains') {
+        href = path;
+        scope = '.user-menu-panel';
+    }
+    if (!href) return;
+    const link = document.querySelector(`${scope} a[href="${href}"]`);
+    if (link) link.setAttribute('aria-current', 'page');
+}
+
+markCurrentNavigation();
+
 function setFormPending(form, pending) {
     if (!form || !form.dataset.success) return;
     if (pending) {
