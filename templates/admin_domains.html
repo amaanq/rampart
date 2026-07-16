@@ -5,7 +5,7 @@
     <h2>alias domains (all)</h2>
     <table>
         <thead>
-            <tr><th>id</th><th>domain</th><th>owner</th><th>shared</th><th>aliases</th><th></th></tr>
+            <tr><th>id</th><th>domain</th><th>owner</th><th class="domain-sharing">shared</th><th>aliases</th><th></th></tr>
         </thead>
         <tbody>
         {%- for d in domains %}
@@ -13,16 +13,24 @@
                 <td>{{ d.id }}</td>
                 <td>{{ d.domain }}</td>
                 <td>{{ d.owner_email.as_deref().unwrap_or("(none)") }}</td>
-                <td>{% if d.shared %}shared{% else %}private{% endif %}</td>
+                <td class="domain-sharing">{% if d.shared %}shared{% else %}private{% endif %}</td>
                 <td>{{ d.nb_alias }}</td>
                 <td>
-                    {% if d.shared %}
-                    <button hx-put="/api/v1/admin/domains/{{ d.id }}/shared"
-                            hx-vals='{"shared":false}' hx-ext="json-enc">unshare</button>
-                    {% else %}
-                    <button hx-put="/api/v1/admin/domains/{{ d.id }}/shared"
-                            hx-vals='{"shared":true}' hx-ext="json-enc">promote to shared</button>
-                    {% endif %}
+                    <button class="secondary domain-sharing-toggle"
+                            hx-put="/api/v1/admin/domains/{{ d.id }}/shared"
+                            hx-vals='{"shared":{% if d.shared %}false{% else %}true{% endif %}}'
+                            hx-ext="json-enc"
+                            hx-disabled-elt="this"
+                            data-reload="no"
+                            data-boolean-toggle="shared"
+                            data-label-true="make private"
+                            data-label-false="make shared"
+                            data-label-target=".domain-sharing-label"
+                            data-text-target=".domain-sharing"
+                            data-text-true="shared"
+                            data-text-false="private">
+                        <span class="domain-sharing-label">{% if d.shared %}make private{% else %}make shared{% endif %}</span>
+                    </button>
                 </td>
             </tr>
         {%- endfor %}

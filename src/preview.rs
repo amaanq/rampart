@@ -619,6 +619,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/api/v1/contacts/{id}", patch(updated))
         .route("/api/v1/contacts/{id}", delete(deleted))
         .route("/api/v1/user/webauthn/credentials/{id}", delete(deleted))
+        .route("/api/v1/admin/domains/{id}/shared", put(updated))
         .route("/healthz", get(healthz))
         .nest_service("/static", ServeDir::new(static_dir));
 

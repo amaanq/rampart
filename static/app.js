@@ -65,12 +65,26 @@ function updateBooleanToggle(trigger) {
         return;
     }
     const buttonLabel = value ? trigger.dataset.labelTrue : trigger.dataset.labelFalse;
-    if (buttonLabel) trigger.textContent = buttonLabel;
+    const buttonLabelTarget = trigger.dataset.labelTarget
+        ? trigger.querySelector(trigger.dataset.labelTarget)
+        : trigger;
+    if (buttonLabel && buttonLabelTarget) buttonLabelTarget.textContent = buttonLabel;
     trigger.setAttribute('hx-vals', JSON.stringify({[property]: !value}));
+
+    const row = trigger.closest('tr');
+    const textSelector = trigger.dataset.textTarget;
+    if (textSelector) {
+        const textTarget = row && row.querySelector(textSelector);
+        const text = value ? trigger.dataset.textTrue : trigger.dataset.textFalse;
+        if (!textTarget || !text) {
+            location.reload();
+            return;
+        }
+        textTarget.textContent = text;
+    }
 
     const statusSelector = trigger.dataset.statusTarget;
     if (!statusSelector) return;
-    const row = trigger.closest('tr');
     const status = row && row.querySelector(statusSelector);
     if (!status) {
         location.reload();
