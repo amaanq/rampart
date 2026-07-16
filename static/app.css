@@ -233,6 +233,14 @@ section { margin-bottom: 2em; }
 .card h2 { margin-top: 0; font-size: 1em; color: var(--muted); }
 .hint { color: var(--muted); font-size: .85em; margin: .25em 0; }
 .error { color: var(--danger); font-weight: 500; }
+.form-status {
+    align-self: center;
+    margin: 0;
+    color: #2f7d44;
+    font-size: .85rem;
+}
+.form-status:empty { display: none; }
+.form-status.is-error { color: var(--danger); }
 
 form { display: flex; flex-wrap: wrap; gap: .75em; align-items: end; }
 main.auth form { flex-direction: column; align-items: stretch; text-align: left; }

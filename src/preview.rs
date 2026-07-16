@@ -4,7 +4,7 @@ use axum::{
     extract::Path,
     http::StatusCode,
     response::{Html, IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
 };
 use std::net::SocketAddr;
 use time::Duration;
@@ -568,6 +568,14 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
+async fn password_change() -> StatusCode {
+    StatusCode::NO_CONTENT
+}
+
+async fn email_change() -> StatusCode {
+    StatusCode::ACCEPTED
+}
+
 pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/login", get(login_page))
@@ -585,6 +593,8 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/aliases/{id}/activity", get(activity_page))
         .route("/admin/users", get(admin_users_page))
         .route("/admin/domains", get(admin_domains_page))
+        .route("/api/v1/user/password", post(password_change))
+        .route("/api/v1/user/email", post(email_change))
         .route("/healthz", get(healthz))
         .nest_service("/static", ServeDir::new(static_dir));
 
