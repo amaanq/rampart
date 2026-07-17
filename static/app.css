@@ -242,7 +242,10 @@ section { margin-bottom: 2em; }
 .hint { color: var(--muted); font-size: .85em; margin: .25em 0; }
 .error { color: var(--danger); font-weight: 500; }
 .form-status {
-    align-self: center;
+    display: flex;
+    align-items: center;
+    align-self: flex-end;
+    min-height: 2rem;
     margin: 0;
     color: #2f7d44;
     font-size: .85rem;

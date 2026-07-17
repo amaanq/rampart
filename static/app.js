@@ -136,6 +136,12 @@ document.body.addEventListener('htmx:afterRequest', function (e) {
     if (form && form.dataset.success) {
         showFormStatus(form, form.dataset.success, false);
         if (form.hasAttribute('data-reset-on-success')) form.reset();
+        if (form.dataset.successRedirect) {
+            setFormPending(form, true);
+            window.setTimeout(function () {
+                location.assign(form.dataset.successRedirect);
+            }, 800);
+        }
     }
     const t = e.detail.elt;
     removeRequestTarget(t);

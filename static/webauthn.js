@@ -72,24 +72,6 @@ async function registerPasskey(ev) {
     }
 }
 
-// Inline replacements for settings.html's old `hx-on::after-request="..."`
-// blocks on the password and email-change forms. The strict-CSP refactor
-// strips those attributes; we listen here instead and key off the form's
-// id so we don't trigger on every successful request.
-document.body.addEventListener('htmx:afterRequest', function (e) {
-    const id = e.detail.elt && e.detail.elt.id;
-    if (id === 'password-change-form') {
-        if (e.detail.successful) {
-            alert("password changed; you'll need to log in again");
-            location.href = '/login';
-        } else {
-            alert('failed: ' + e.detail.xhr.responseText);
-        }
-    } else if (id === 'email-change-form') {
-        alert(e.detail.successful ? 'confirmation email sent' : 'failed');
-    }
-});
-
 // Passkey LOGIN. Used by the /login page's optional passkey form.
 // Submits the user's email, calls /api/v1/auth/passkey/start, drives
 // navigator.credentials.get(), then /finish — on success, server sets

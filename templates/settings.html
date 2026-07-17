@@ -4,7 +4,8 @@
 <section class="card">
     <h2>change password</h2>
     <form id="password-change-form" data-reload="no"
-          data-success="Password changed." data-reset-on-success
+          data-success="Password changed. Redirecting to sign in…"
+          data-success-redirect="/login"
           hx-post="/api/v1/user/password" hx-ext="json-enc">
         <label>current password <input type="password" name="current_password" required></label>
         <label>new password (min 10) <input type="password" name="new_password" minlength="10" required></label>
@@ -50,5 +51,5 @@
         </tbody>
     </table>
 </section>
-<script src="/static/webauthn.js" defer></script>
+<script src="/static/webauthn.js?v=20260716" defer></script>
 {% endblock %}

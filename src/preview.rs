@@ -2,14 +2,15 @@ use askama::Template;
 use axum::{
     Router,
     extract::Path,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{Html, IntoResponse, Response},
     routing::{delete, get, patch, post, put},
 };
 use std::net::SocketAddr;
 use time::Duration;
 use time::OffsetDateTime;
-use tower_http::services::ServeDir;
+use tower::ServiceBuilder;
+use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer};
 
 use crate::template_filters as filters;
 use crate::web::{AliasRowView, DomainRowView, MailboxSummaryView};
@@ -590,6 +591,12 @@ async fn updated() -> StatusCode {
 }
 
 pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()> {
+    let static_files = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache"),
+        ))
+        .service(ServeDir::new(static_dir));
     let app = Router::new()
         .route("/login", get(login_page))
         .route("/signup/{token}", get(signup_page))
@@ -621,7 +628,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/api/v1/user/webauthn/credentials/{id}", delete(deleted))
         .route("/api/v1/admin/domains/{id}/shared", put(updated))
         .route("/healthz", get(healthz))
-        .nest_service("/static", ServeDir::new(static_dir));
+        .nest_service("/static", static_files);
 
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!(addr = %listen, "preview server listening");

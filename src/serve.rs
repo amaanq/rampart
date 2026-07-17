@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use axum::{
     Form, Json, Router,
     extract::{ConnectInfo, Path, State},
-    http::{HeaderMap, StatusCode, header},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware,
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
@@ -15,7 +15,8 @@ use serde::Deserialize;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use time::{Duration, OffsetDateTime};
-use tower_http::{services::ServeDir, trace::TraceLayer};
+use tower::ServiceBuilder;
+use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer, trace::TraceLayer};
 
 use crate::AppState;
 use crate::auth::{self, SESSION_COOKIE_NAME, SESSION_LIFETIME_DAYS};
@@ -84,12 +85,19 @@ pub async fn serve(cfg: crate::config::Config) -> Result<()> {
         ));
 
     // /setup uses its own double-submit-cookie CSRF defense.
+    let static_files = ServiceBuilder::new()
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("no-cache"),
+        ))
+        .service(ServeDir::new(state.config.static_dir.clone()));
+
     let public = Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .route("/setup", get(setup_page).post(setup_post))
         .merge(public_form_token)
         .merge(public_form_origin)
-        .nest_service("/static", ServeDir::new(state.config.static_dir.clone()));
+        .nest_service("/static", static_files);
 
     // No CompressionLayer: nginx in front handles gzip; double-gzip would
     // just burn CPU.

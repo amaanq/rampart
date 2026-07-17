@@ -28,7 +28,7 @@ tokio = {
 	],
 }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["trace", "fs"] }
+tower-http = { version = "0.6", features = ["trace", "fs", "set-header"] }
 
 tokio-postgres = { version = "0.7", features = ["with-time-0_3"] }
 rampart-codegen = { path = "db/rampart-codegen" }
