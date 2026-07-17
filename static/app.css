@@ -423,15 +423,42 @@ code {
 .pager { margin-top: 1em; display: flex; gap: 1em; }
 .passkeys-table { margin-top: 1em; }
 .rampart-error-banner {
-    background: #fee;
-    border: 1px solid #c33;
-    color: #900;
-    padding: .8em 1.2em;
-    margin: 0 0 1em 0;
-    border-radius: 4px;
-    font-family: ui-monospace, "SF Mono", Menlo, monospace;
-    font-size: .95em;
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    width: max-content;
+    max-width: min(32rem, calc(100vw - 2rem));
+    padding: .65rem .7rem .65rem .9rem;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--danger);
+    border-radius: 6px;
+    color: var(--fg);
+    box-shadow: 0 4px 18px rgba(0, 0, 0, .14);
+    font-size: .875rem;
+}
+.rampart-error-message {
+    min-width: 0;
+    overflow-wrap: anywhere;
     white-space: pre-wrap;
+}
+.rampart-error-dismiss {
+    flex: none;
+    min-height: 1.75rem;
+    padding: .2rem .4rem;
+    background: transparent;
+    border-color: transparent;
+    color: var(--muted);
+    font-size: 1rem;
+}
+.rampart-error-dismiss:hover {
+    background: var(--bg);
+    border-color: var(--border);
+    color: var(--fg);
 }
 
 @media (max-width: 700px) {
@@ -465,6 +492,11 @@ code {
     }
     nav::-webkit-scrollbar { display: none; }
     main:not(.auth) { margin: 1.25rem auto; padding: 0 .75rem; }
+    .rampart-error-banner {
+        right: .75rem;
+        bottom: .75rem;
+        max-width: calc(100vw - 1.5rem);
+    }
     table {
         display: block;
         max-width: 100%;

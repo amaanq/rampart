@@ -123,6 +123,7 @@ function completeRequestTrigger(trigger) {
 }
 
 document.body.addEventListener('htmx:beforeRequest', function (e) {
+    clearError();
     const form = requestForm(e);
     if (!form) return;
     showFormStatus(form, '', false);
@@ -152,18 +153,31 @@ document.body.addEventListener('htmx:afterRequest', function (e) {
     location.reload();
 });
 
-// Surface 4xx/5xx response bodies as a banner so failed POSTs aren't
-// silent. Sl's ApiError responses return the message as text/plain.
+function clearError() {
+    const el = document.getElementById('rampart-error-banner');
+    if (el) el.remove();
+}
+
 function showError(msg) {
-    let el = document.getElementById('rampart-error-banner');
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'rampart-error-banner';
-        el.className = 'rampart-error-banner';
-        document.body.insertBefore(el, document.body.firstChild);
-    }
-    el.textContent = msg;
-    el.scrollIntoView({behavior: 'smooth', block: 'start'});
+    clearError();
+    const el = document.createElement('div');
+    el.id = 'rampart-error-banner';
+    el.className = 'rampart-error-banner';
+    el.setAttribute('role', 'alert');
+
+    const message = document.createElement('span');
+    message.className = 'rampart-error-message';
+    message.textContent = msg;
+
+    const dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'rampart-error-dismiss';
+    dismiss.setAttribute('aria-label', 'Dismiss error');
+    dismiss.textContent = '×';
+    dismiss.addEventListener('click', clearError);
+
+    el.append(message, dismiss);
+    document.body.appendChild(el);
 }
 document.body.addEventListener('htmx:responseError', function (e) {
     const xhr = e.detail.xhr;
