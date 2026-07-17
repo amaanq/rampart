@@ -47,28 +47,75 @@ function serializeCred(cred) {
     };
 }
 
+function setPasskeyFormPending(form, pending) {
+    if (pending) {
+        form.setAttribute('aria-busy', 'true');
+    } else {
+        form.removeAttribute('aria-busy');
+    }
+    const button = form.querySelector('button[type="submit"]');
+    if (button) button.disabled = pending;
+}
+
+function showPasskeyFormStatus(form, message, isError) {
+    const status = form.querySelector('[data-passkey-status]');
+    if (!status) return;
+    status.textContent = message;
+    status.classList.toggle('is-error', isError);
+}
+
+async function responseMessage(response, fallback) {
+    const message = (await response.text()).trim();
+    return message || fallback;
+}
+
 async function registerPasskey(ev) {
     ev.preventDefault();
+    const form = ev.currentTarget;
     const name = document.getElementById('pk-name').value.trim();
     if (!name) return;
-    const r1 = await fetch('/api/v1/user/webauthn/register/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-    });
-    if (!r1.ok) { alert('register start failed'); return; }
-    const { ceremony_id, challenge } = await r1.json();
-    const pk = normalize(challenge);
-    const cred = await navigator.credentials.create({ publicKey: pk });
-    const r2 = await fetch('/api/v1/user/webauthn/register/finish', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ceremony_id, name, credential: serializeCred(cred) }),
-    });
-    if (r2.ok) {
-        location.reload();
-    } else {
-        alert('register finish failed: ' + await r2.text());
+    showPasskeyFormStatus(form, '', false);
+    setPasskeyFormPending(form, true);
+
+    try {
+        if (!window.PublicKeyCredential || !navigator.credentials) {
+            throw new Error('Passkeys are not supported in this browser.');
+        }
+        const r1 = await fetch('/api/v1/user/webauthn/register/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: '{}',
+        });
+        if (!r1.ok) {
+            throw new Error(await responseMessage(r1, 'Could not start passkey registration.'));
+        }
+        const { ceremony_id, challenge } = await r1.json();
+        const pk = normalize(challenge);
+        const cred = await navigator.credentials.create({ publicKey: pk });
+        if (!cred) throw new Error('Passkey registration was cancelled.');
+        const r2 = await fetch('/api/v1/user/webauthn/register/finish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ceremony_id, name, credential: serializeCred(cred) }),
+        });
+        if (!r2.ok) {
+            throw new Error(await responseMessage(r2, 'Could not finish passkey registration.'));
+        }
+        form.reset();
+        showPasskeyFormStatus(form, 'Passkey registered. Refreshing…', false);
+        window.setTimeout(function () {
+            location.reload();
+        }, 800);
+    } catch (error) {
+        const cancelled = error && (error.name === 'NotAllowedError' || error.name === 'AbortError');
+        let message = 'Passkey registration failed.';
+        if (cancelled) {
+            message = 'Passkey registration was cancelled or timed out.';
+        } else if (error && error.message) {
+            message = error.message;
+        }
+        showPasskeyFormStatus(form, message, true);
+        setPasskeyFormPending(form, false);
     }
 }
 
