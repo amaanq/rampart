@@ -4,11 +4,14 @@
 <section class="card">
     <h2>add your alias domain</h2>
     <p class="hint">Private to you. Admin can promote to shared from /admin/domains.</p>
-    <form hx-post="/api/v1/domain" hx-ext="json-enc">
+    <form hx-post="/api/v1/domain" hx-ext="json-enc" hx-sync="this:drop">
         <label>domain <input type="text" name="domain" required></label>
         <label>random prefix <input type="text" name="random_prefix" placeholder="(optional)"></label>
-        <p class="hint">Reply prefix is locked to <code>ra+</code> system-wide.</p>
-        <button type="submit">add</button>
+        <div class="form-action-row">
+            <p class="hint">Reply prefix is locked to <code>ra+</code> system-wide.</p>
+            <button type="submit">add</button>
+            <p class="form-status" data-form-status role="status" aria-live="polite"></p>
+        </div>
     </form>
 </section>
 <section>

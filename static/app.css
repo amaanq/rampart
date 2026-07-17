@@ -253,6 +253,18 @@ section { margin-bottom: 2em; }
 }
 .form-status:empty { display: none; }
 .form-status.is-error { color: var(--danger); }
+.form-action-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    align-self: flex-end;
+    gap: .75em;
+}
+.form-action-row .hint,
+.form-action-row .form-status {
+    align-self: auto;
+    margin: 0;
+}
 
 form { display: flex; flex-wrap: wrap; gap: .75em; align-items: end; }
 main.auth form { flex-direction: column; align-items: stretch; text-align: left; }
