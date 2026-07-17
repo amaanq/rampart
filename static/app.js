@@ -24,7 +24,7 @@ function markCurrentNavigation() {
 markCurrentNavigation();
 
 function setFormPending(form, pending) {
-    if (!form || !form.dataset.success) return;
+    if (!form || (!form.dataset.success && !form.querySelector('[data-form-status]'))) return;
     if (pending) {
         form.setAttribute('aria-busy', 'true');
     } else {
@@ -124,7 +124,7 @@ function completeRequestTrigger(trigger) {
 
 document.body.addEventListener('htmx:beforeRequest', function (e) {
     const form = requestForm(e);
-    if (!form || !form.dataset.success) return;
+    if (!form) return;
     showFormStatus(form, '', false);
     setFormPending(form, true);
 });
