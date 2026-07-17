@@ -64,6 +64,11 @@ function showPasskeyFormStatus(form, message, isError) {
     status.classList.toggle('is-error', isError);
 }
 
+function passkeyLoginDestination(form) {
+    const next = form.dataset.next || '/';
+    return next.startsWith('/') && !next.startsWith('//') ? next : '/';
+}
+
 async function responseMessage(response, fallback) {
     const message = (await response.text()).trim();
     return message || fallback;
@@ -167,7 +172,7 @@ async function loginWithPasskey(ev) {
         });
         if (!r2.ok) throw new Error('Passkey sign-in failed.');
         showPasskeyFormStatus(form, 'Signed in. Redirecting…', false);
-        location.href = '/';
+        location.href = passkeyLoginDestination(form);
     } catch (error) {
         const cancelled = error && (error.name === 'NotAllowedError' || error.name === 'AbortError');
         let message = 'Passkey sign-in failed.';

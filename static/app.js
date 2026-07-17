@@ -181,6 +181,12 @@ function showError(msg) {
 }
 document.body.addEventListener('htmx:responseError', function (e) {
     const xhr = e.detail.xhr;
+    if (xhr.status === 401) {
+        const next = location.pathname + location.search;
+        const loginUrl = next === '/' ? '/login' : `/login?next=${encodeURIComponent(next)}`;
+        location.assign(loginUrl);
+        return;
+    }
     const msg = (xhr.responseText || '').trim() || `${xhr.status} ${xhr.statusText}`;
     const form = requestForm(e);
     setFormPending(form, false);

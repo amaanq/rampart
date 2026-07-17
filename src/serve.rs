@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use axum::{
     Form, Json, Router,
-    extract::{ConnectInfo, Path, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware,
     response::{IntoResponse, Redirect, Response},
@@ -142,7 +142,25 @@ async fn shutdown_signal() {
     let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Stopping]);
 }
 
-async fn login_page(State(state): State<AppState>) -> Response {
+#[derive(Default, Deserialize)]
+struct LoginQuery {
+    #[serde(default)]
+    next: String,
+}
+
+fn login_destination(next: &str) -> &str {
+    if next.starts_with('/')
+        && !next.starts_with("//")
+        && !next.contains('\\')
+        && !next.chars().any(char::is_control)
+    {
+        next
+    } else {
+        "/"
+    }
+}
+
+async fn login_page(State(state): State<AppState>, Query(query): Query<LoginQuery>) -> Response {
     // First-run UX: if no user has been created yet, bounce the operator
     // straight to /setup. Removes the need for any documented "first run
     // CLI step" — the deploy URL is the only thing they need to hit.
@@ -154,8 +172,14 @@ async fn login_page(State(state): State<AppState>) -> Response {
     #[template(path = "login.html")]
     struct LoginPage<'a> {
         error: Option<&'a str>,
+        next: &'a str,
     }
-    match (LoginPage { error: None }).render() {
+    match (LoginPage {
+        error: None,
+        next: login_destination(&query.next),
+    })
+    .render()
+    {
         Ok(body) => (StatusCode::OK, axum::response::Html(body)).into_response(),
         Err(e) => ApiError::Template(e).into_response(),
     }
@@ -341,6 +365,8 @@ fn setup_page_with_error(state: &AppState, msg: &str) -> Response {
 struct LoginForm {
     email: String,
     password: String,
+    #[serde(default)]
+    next: String,
 }
 
 async fn login_post(
@@ -357,7 +383,7 @@ async fn login_post(
             Ok(false) => {
                 return (
                     StatusCode::TOO_MANY_REQUESTS,
-                    login_page_with_error("too many login attempts; try again later"),
+                    login_page_with_error("too many login attempts; try again later", &form.next),
                 )
                     .into_response();
             }
@@ -377,7 +403,7 @@ async fn login_post(
         Ok(None) => {
             return (
                 StatusCode::UNAUTHORIZED,
-                login_page_with_error("invalid credentials"),
+                login_page_with_error("invalid credentials", &form.next),
             )
                 .into_response();
         }
@@ -412,7 +438,7 @@ async fn login_post(
     }
 
     let cookie = build_session_cookie(&state, &session_id);
-    let mut resp = Redirect::to("/").into_response();
+    let mut resp = Redirect::to(login_destination(&form.next)).into_response();
     resp.headers_mut()
         .insert(header::SET_COOKIE, cookie.parse().unwrap());
     resp
@@ -442,14 +468,20 @@ fn build_clear_session_cookie(state: &AppState) -> String {
     format!("{SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax{secure_attr}; Max-Age=0")
 }
 
-fn login_page_with_error(msg: &str) -> Response {
+fn login_page_with_error(msg: &str, next: &str) -> Response {
     use askama::Template;
     #[derive(Template)]
     #[template(path = "login.html")]
     struct LoginPage<'a> {
         error: Option<&'a str>,
+        next: &'a str,
     }
-    match (LoginPage { error: Some(msg) }).render() {
+    match (LoginPage {
+        error: Some(msg),
+        next: login_destination(next),
+    })
+    .render()
+    {
         Ok(body) => axum::response::Html(body).into_response(),
         Err(e) => ApiError::Template(e).into_response(),
     }
@@ -927,4 +959,28 @@ pub async fn security_headers_layer(
         HeaderValue::from_static("interest-cohort=()"),
     );
     resp
+}
+
+#[cfg(test)]
+mod tests {
+    use super::login_destination;
+
+    #[test]
+    fn login_destination_accepts_local_paths() {
+        assert_eq!(login_destination("/admin/users"), "/admin/users");
+        assert_eq!(login_destination("/aliases/1?page=2"), "/aliases/1?page=2");
+    }
+
+    #[test]
+    fn login_destination_rejects_external_and_invalid_paths() {
+        for next in [
+            "",
+            "https://example.com",
+            "//example.com",
+            "/\\example.com",
+            "/ok\nset-cookie:x",
+        ] {
+            assert_eq!(login_destination(next), "/");
+        }
+    }
 }

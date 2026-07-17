@@ -1,11 +1,12 @@
 use askama::Template;
 use axum::{
-    Router,
-    extract::Path,
+    Form, Router,
+    extract::{Path, Query},
     http::{HeaderValue, StatusCode, header},
-    response::{Html, IntoResponse, Response},
+    response::{Html, IntoResponse, Redirect, Response},
     routing::{delete, get, patch, post, put},
 };
+use serde::Deserialize;
 use std::net::SocketAddr;
 use time::Duration;
 use time::OffsetDateTime;
@@ -332,13 +333,39 @@ fn is_admin() -> bool {
     true
 }
 
-async fn login_page() -> Response {
+#[derive(Default, Deserialize)]
+struct PreviewLoginQuery {
+    #[serde(default)]
+    next: String,
+}
+
+fn preview_login_destination(next: &str) -> &str {
+    if next.starts_with('/')
+        && !next.starts_with("//")
+        && !next.contains('\\')
+        && !next.chars().any(char::is_control)
+    {
+        next
+    } else {
+        "/"
+    }
+}
+
+async fn login_page(Query(query): Query<PreviewLoginQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "login.html")]
     struct LoginPage<'a> {
         error: Option<&'a str>,
+        next: &'a str,
     }
-    render(&LoginPage { error: None })
+    render(&LoginPage {
+        error: None,
+        next: preview_login_destination(&query.next),
+    })
+}
+
+async fn login_post(Form(form): Form<PreviewLoginQuery>) -> Redirect {
+    Redirect::to(preview_login_destination(&form.next))
 }
 
 async fn signup_page(Path(token): Path<String>) -> Response {
@@ -590,6 +617,10 @@ async fn updated() -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
+async fn unauthorized() -> (StatusCode, &'static str) {
+    (StatusCode::UNAUTHORIZED, "401 unauthorized")
+}
+
 pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()> {
     let static_files = ServiceBuilder::new()
         .layer(SetResponseHeaderLayer::overriding(
@@ -598,7 +629,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         ))
         .service(ServeDir::new(static_dir));
     let app = Router::new()
-        .route("/login", get(login_page))
+        .route("/login", get(login_page).post(login_post))
         .route("/signup/{token}", get(signup_page))
         .route("/auth/forgot", get(forgot_page))
         .route("/auth/reset/{token}", get(reset_page))
@@ -627,6 +658,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/api/v1/contacts/{id}", delete(deleted))
         .route("/api/v1/user/webauthn/credentials/{id}", delete(deleted))
         .route("/api/v1/admin/domains/{id}/shared", put(updated))
+        .route("/api/v1/admin/users/{id}/enable", put(unauthorized))
         .route("/healthz", get(healthz))
         .nest_service("/static", static_files);
 

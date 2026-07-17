@@ -16,6 +16,7 @@
         <p class="auth-error" role="alert">{{ e }}</p>
         {% endif %}
         <form method="post" action="/login" class="auth-form">
+            <input type="hidden" name="next" value="{{ next }}">
             <label for="email">Email</label>
             <input id="email" name="email" type="email" autocomplete="username" autofocus required>
             <label for="password">Password</label>
@@ -23,7 +24,7 @@
             <button type="submit" class="auth-submit">Sign in</button>
         </form>
         <div class="auth-sep" role="separator"><span>or</span></div>
-        <form id="passkey-login-form" class="auth-form auth-form-secondary">
+        <form id="passkey-login-form" class="auth-form auth-form-secondary" data-next="{{ next }}">
             <button type="submit" class="auth-passkey">Sign in with passkey</button>
             <p class="auth-status" id="pk-login-status" data-passkey-status role="status" aria-live="polite"></p>
         </form>
