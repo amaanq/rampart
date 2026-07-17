@@ -125,46 +125,59 @@ async function registerPasskey(ev) {
 // the session cookie and we redirect to /.
 async function loginWithPasskey(ev) {
     ev.preventDefault();
+    const form = ev.currentTarget;
     // Login form unified the email field — read from #email if the
     // dedicated #pk-login-email isn't there. Safe in either layout.
     const emailEl =
         document.getElementById('pk-login-email') ||
         document.getElementById('email');
     const email = (emailEl && emailEl.value.trim()) || '';
-    const status = document.getElementById('pk-login-status');
     if (!email) {
-        if (status) status.textContent = 'enter your email above first';
+        showPasskeyFormStatus(form, 'Enter your email above first.', true);
         if (emailEl) emailEl.focus();
         return;
     }
-    if (status) status.textContent = '';
-    const r1 = await fetch('/api/v1/auth/passkey/start', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email }),
-    });
-    if (!r1.ok) {
-        if (status) status.textContent = 'passkey unavailable';
-        return;
-    }
-    const { ceremony_id, challenge } = await r1.json();
-    const pk = normalize(challenge);
-    let cred;
+    showPasskeyFormStatus(form, 'Preparing passkey sign-in…', false);
+    setPasskeyFormPending(form, true);
+
     try {
-        cred = await navigator.credentials.get({ publicKey: pk });
-    } catch (e) {
-        if (status) status.textContent = 'cancelled';
-        return;
-    }
-    const r2 = await fetch('/api/v1/auth/passkey/finish', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ceremony_id, credential: serializeCred(cred) }),
-    });
-    if (r2.ok) {
+        if (!window.PublicKeyCredential || !navigator.credentials) {
+            throw new Error('Passkeys are not supported in this browser.');
+        }
+        const r1 = await fetch('/api/v1/auth/passkey/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email }),
+        });
+        if (!r1.ok) {
+            const message = r1.status === 429
+                ? 'Too many attempts. Try again later.'
+                : 'Passkey sign-in is unavailable.';
+            throw new Error(message);
+        }
+        const { ceremony_id, challenge } = await r1.json();
+        const pk = normalize(challenge);
+        showPasskeyFormStatus(form, 'Waiting for your passkey…', false);
+        const cred = await navigator.credentials.get({ publicKey: pk });
+        if (!cred) throw new Error('Passkey sign-in was cancelled.');
+        const r2 = await fetch('/api/v1/auth/passkey/finish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ceremony_id, credential: serializeCred(cred) }),
+        });
+        if (!r2.ok) throw new Error('Passkey sign-in failed.');
+        showPasskeyFormStatus(form, 'Signed in. Redirecting…', false);
         location.href = '/';
-    } else if (status) {
-        status.textContent = 'auth failed';
+    } catch (error) {
+        const cancelled = error && (error.name === 'NotAllowedError' || error.name === 'AbortError');
+        let message = 'Passkey sign-in failed.';
+        if (cancelled) {
+            message = 'Passkey sign-in was cancelled or timed out.';
+        } else if (error && error.message) {
+            message = error.message;
+        }
+        showPasskeyFormStatus(form, message, true);
+        setPasskeyFormPending(form, false);
     }
 }
 

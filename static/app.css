@@ -214,6 +214,7 @@ main.auth .brand {
     text-align: center;
 }
 .auth-status:empty { display: none; }
+.auth-status.is-error { color: var(--danger); }
 .auth-hint {
     margin: 1.25rem 0 0;
     text-align: center;
