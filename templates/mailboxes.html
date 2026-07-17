@@ -4,10 +4,11 @@
 <section class="card">
     <h2>add mailbox</h2>
     <p class="hint">A verification link will be emailed to this address. It expires in 24 hours.</p>
-    <form hx-post="/api/v1/mailbox" hx-ext="json-enc">
+    <form hx-post="/api/v1/mailbox" hx-ext="json-enc" hx-sync="this:drop">
         <label>email <input type="email" name="email" required></label>
         <label>display name <input type="text" name="display_name"></label>
         <button type="submit">add</button>
+        <p class="form-status" data-form-status role="status" aria-live="polite"></p>
     </form>
 </section>
 <section>
