@@ -722,13 +722,14 @@ async fn change_email_page(Path(token): Path<String>) -> Response {
         title: &'a str,
         body: &'a str,
         action: &'a str,
+        button_label: &'a str,
     }
     render_or_err(
         (ConfirmPage {
-            title: "confirm email change",
-            body:
-                "Click confirm to change your rampart account email to the address this message was sent to.",
+            title: "Confirm email change",
+            body: "Change your rampart account email to the address this message was sent to.",
             action: &format!("/auth/change-email/{token}"),
+            button_label: "Change email",
         })
         .render(),
     )
@@ -749,12 +750,14 @@ async fn mailbox_verify_page(Path(token): Path<String>) -> Response {
         title: &'a str,
         body: &'a str,
         action: &'a str,
+        button_label: &'a str,
     }
     render_or_err(
         (ConfirmPage {
-            title: "verify mailbox",
-            body: "Click confirm to prove ownership of this mailbox.",
+            title: "Verify mailbox",
+            body: "Confirm that you own the mailbox this message was sent to.",
             action: &format!("/mailbox/verify/{token}"),
+            button_label: "Verify mailbox",
         })
         .render(),
     )

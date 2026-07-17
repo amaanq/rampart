@@ -8,12 +8,14 @@
 </head>
 <body>
 <main class="auth">
-    <h1>rampart</h1>
-    <form method="post" action="{{ action }}" class="card">
-        <h2>{{ title }}</h2>
-        <p>{{ body }}</p>
-        <button type="submit">confirm</button>
-    </form>
+    <a href="/" class="brand">rampart</a>
+    <section class="auth-card">
+        <h1>{{ title }}</h1>
+        <p class="auth-copy">{{ body }}</p>
+        <form method="post" action="{{ action }}" class="auth-form">
+            <button type="submit" class="auth-submit">{{ button_label }}</button>
+        </form>
+    </section>
 </main>
 </body>
 </html>

@@ -144,6 +144,11 @@ main.auth .brand {
     color: var(--danger);
     font-size: .9em;
 }
+.auth-copy {
+    margin: 0 0 1.25rem;
+    color: var(--muted);
+    font-size: .92em;
+}
 .auth-form {
     display: flex;
     flex-direction: column;

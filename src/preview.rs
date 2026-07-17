@@ -416,23 +416,33 @@ async fn confirm_page(token: String, which: &str) -> Response {
         title: &'a str,
         body: &'a str,
         action: &'a str,
+        button_label: &'a str,
     }
-    let (title, body) = match which {
+    let (title, body, action, button_label) = match which {
         "change-email" => (
-            "confirm email change",
-            "Click confirm to change your rampart account email to the address this message was sent to.",
+            "Confirm email change",
+            "Change your rampart account email to the address this message was sent to.",
+            format!("/auth/change-email/{token}"),
+            "Change email",
         ),
         "verify" => (
-            "verify mailbox",
-            "Click confirm to prove ownership of this mailbox.",
+            "Verify mailbox",
+            "Confirm that you own the mailbox this message was sent to.",
+            format!("/mailbox/verify/{token}"),
+            "Verify mailbox",
         ),
-        _ => ("confirm", "Confirm this action."),
+        _ => (
+            "Confirm action",
+            "Confirm this action.",
+            format!("/auth/{which}/{token}"),
+            "Confirm",
+        ),
     };
-    let action = format!("/auth/{which}/{token}");
     render(&ConfirmPage {
         title,
         body,
         action: &action,
+        button_label,
     })
 }
 
