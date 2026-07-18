@@ -111,7 +111,7 @@ pub(super) async fn user_start_email_change(
     .map_err(ApiError::Internal)?;
     if !ok {
         return Err(ApiError::BadRequest(
-            "too many requests; try again later".into(),
+            "too many requests. Try again later".into(),
         ));
     }
     crate::flows::start_email_change(

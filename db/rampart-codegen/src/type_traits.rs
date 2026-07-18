@@ -14,6 +14,10 @@ pub trait BytesSql: std::fmt::Debug + ToSql + Send + Sync {}
 impl<T: BytesSql> BytesSql for &T {}
 impl BytesSql for Vec<u8> {}
 impl BytesSql for &[u8] {}
+pub trait JsonSql: std::fmt::Debug + ToSql + Sync + Send {}
+impl<T: JsonSql> JsonSql for &T {}
+impl JsonSql for serde_json::value::Value {}
+impl<T: serde::ser::Serialize + std::fmt::Debug + Sync + Send> JsonSql for postgres_types::Json<T> {}
 pub trait ArraySql: std::fmt::Debug + ToSql + Send + Sync {
     type Item;
     fn escape_domain_to_sql(

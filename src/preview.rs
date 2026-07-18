@@ -13,6 +13,7 @@ use time::OffsetDateTime;
 use tower::ServiceBuilder;
 use tower_http::{services::ServeDir, set_header::SetResponseHeaderLayer};
 
+use crate::domain_setup::{self, DkimRecord, DnsObservation, DnsStatus, DomainSetup, RecordStatus};
 use crate::template_filters as filters;
 use crate::web::{AliasRowView, DomainRowView, MailboxSummaryView};
 use rampart_codegen::queries::{
@@ -138,8 +139,68 @@ fn mock_domains() -> Vec<DomainRowView> {
             random_prefix: rp.to_string(),
             reply_prefix: reply.to_string(),
             nb_alias: *n,
+            setup_state: ["setup", "ready", "attention"][i].to_owned(),
         })
         .collect()
+}
+
+fn mock_domain_setup(id: i64) -> DomainSetup {
+    let domain = ["dev.local", "shared.example", "admin.example"]
+        .get(id.saturating_sub(1) as usize)
+        .copied()
+        .unwrap_or("dev.local");
+    let dkim = vec![
+        DkimRecord {
+            algorithm: "ed25519".into(),
+            selector: "v1-ed25519-20260718".into(),
+            value: "v=DKIM1; k=ed25519; h=sha256; p=11qYAYKxCrfVS/7TyWwQ1Y8GfH4v7sQxY8P0vR8zJtE=".into(),
+        },
+        DkimRecord {
+            algorithm: "rsa".into(),
+            selector: "v1-rsa-20260718".into(),
+            value: "v=DKIM1; k=rsa; h=sha256; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8Apreviewkeythatwrapsacrossalongdnsvalue".into(),
+        },
+    ];
+    let base = domain_setup::build(
+        id,
+        domain,
+        "mx.rampart.email",
+        &dkim,
+        &DnsStatus::new(),
+        None,
+        None,
+    );
+    let status: DnsStatus = base
+        .records
+        .iter()
+        .map(|record| {
+            let record_status = match id {
+                2 => RecordStatus::Found,
+                3 if record.id == "dmarc" => RecordStatus::Mismatch,
+                3 => RecordStatus::Found,
+                _ if matches!(record.id.as_str(), "mx" | "spf") => RecordStatus::Found,
+                _ => RecordStatus::Pending,
+            };
+            (
+                record.id.clone(),
+                DnsObservation {
+                    status: record_status,
+                    expected: record.value.clone(),
+                    observed: Vec::new(),
+                },
+            )
+        })
+        .collect();
+    let verified_at = (id == 3).then_some(OffsetDateTime::now_utc());
+    domain_setup::build(
+        id,
+        domain,
+        "mx.rampart.email",
+        &dkim,
+        &status,
+        Some(OffsetDateTime::now_utc()),
+        verified_at,
+    )
 }
 
 fn mock_mailboxes() -> Vec<mbq::MailboxRow> {
@@ -778,6 +839,29 @@ async fn domains_page(Query(query): Query<PreviewListQuery>) -> Response {
     })
 }
 
+async fn domain_setup_page(Path(domain_id): Path<i64>) -> Response {
+    #[derive(Template)]
+    #[template(path = "domain_setup.html")]
+    struct Page {
+        setup: DomainSetup,
+        user_email: String,
+        is_admin: bool,
+    }
+    render(&Page {
+        setup: mock_domain_setup(domain_id),
+        user_email: user_email(),
+        is_admin: is_admin(),
+    })
+}
+
+async fn domain_created() -> (StatusCode, Json<serde_json::Value>) {
+    (StatusCode::CREATED, Json(serde_json::json!({"id": 1})))
+}
+
+async fn domain_checked(Path(domain_id): Path<i64>) -> Json<DomainSetup> {
+    Json(mock_domain_setup(domain_id))
+}
+
 async fn settings_page(Query(query): Query<PreviewListQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "settings.html")]
@@ -947,6 +1031,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/", get(aliases_page))
         .route("/mailboxes", get(mailboxes_page))
         .route("/domains", get(domains_page))
+        .route("/domains/{id}", get(domain_setup_page))
         .route("/settings", get(settings_page))
         .route("/aliases/{id}/contacts", get(contacts_page))
         .route("/aliases/{id}/activity", get(activity_page))
@@ -956,6 +1041,8 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/api/v1/user/email", post(email_change))
         .route("/api/v1/aliases/{id}", delete(deleted))
         .route("/api/v1/domain/{id}", delete(deleted))
+        .route("/api/v1/domain", post(domain_created))
+        .route("/api/v1/domain/{id}/check", post(domain_checked))
         .route("/api/v1/aliases/{id}/toggle", put(updated))
         .route("/api/v1/mailbox/{id}", patch(updated))
         .route("/api/v1/mailbox/{id}", delete(deleted))

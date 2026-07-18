@@ -1,0 +1,101 @@
+{% extends "layout.html" %}
+{% block title %}{{ setup.domain }} — domain setup{% endblock %}
+{% block main_class %}domain-setup-main{% endblock %}
+{% block body %}
+<section class="detail-header domain-detail-header">
+    <a class="back-link" href="/domains">← domains</a>
+    <div class="domain-title-row">
+        <div>
+            <h2>{{ setup.domain }}</h2>
+            <p class="domain-setup-summary" data-setup-summary>{{ setup.summary }}</p>
+        </div>
+        <span class="domain-state is-{{ setup.state_label }}" data-setup-state>{{ setup.state_label }}</span>
+    </div>
+</section>
+
+<section class="dns-setup-card"
+         data-domain-setup
+         data-domain-id="{{ setup.domain_id }}"
+         data-state="{{ setup.state_label }}">
+    <div class="dns-setup-intro">
+        <div>
+            <h3>DNS records</h3>
+            <p>Add these at the provider that manages your domain’s DNS.</p>
+        </div>
+        <button type="button" class="secondary" data-copy-all>copy all</button>
+    </div>
+
+    <div class="dns-record-section">
+        <h3>receive mail</h3>
+        <p>Routes incoming mail for this domain through Rampart.</p>
+        <div class="dns-record-list" data-record-group="receive">
+        {%- for record in setup.records %}
+            {% if record.group == "receive" %}
+            <div class="dns-record is-{{ record.status_label }}{% if record.priority.is_some() %} has-priority{% endif %}" data-record-id="{{ record.id }}">
+                <span class="dns-record-status" data-record-status>{{ record.status_text }}</span>
+                <strong class="dns-record-kind">{{ record.kind }}</strong>
+                <div class="dns-record-field dns-record-host">
+                    <span>name</span><code data-record-host>{{ record.host }}</code>
+                </div>
+                <button type="button" class="secondary dns-copy" data-copy-value="{{ record.host }}">copy</button>
+                {% if let Some(priority) = record.priority %}
+                <div class="dns-record-field dns-record-priority">
+                    <span>priority</span><code data-record-priority>{{ priority }}</code>
+                </div>
+                <button type="button" class="secondary dns-copy" data-copy-value="{{ priority }}">copy</button>
+                {% endif %}
+                <div class="dns-record-field dns-record-value">
+                    <span>{{ record.value_label }}</span><code data-record-value>{{ record.provider_value }}</code>
+                </div>
+                <button type="button" class="secondary dns-copy" data-copy-value="{{ record.provider_value }}">copy</button>
+            </div>
+            {% endif %}
+        {%- endfor %}
+        </div>
+    </div>
+
+    <div class="dns-record-section">
+        <h3>deliver &amp; reply</h3>
+        <p>Authenticates replies so receiving providers trust them.</p>
+        <div class="dns-record-list" data-record-group="reply">
+        {%- for record in setup.records %}
+            {% if record.group == "reply" %}
+            <div class="dns-record is-{{ record.status_label }}{% if record.priority.is_some() %} has-priority{% endif %}" data-record-id="{{ record.id }}">
+                <span class="dns-record-status" data-record-status>{{ record.status_text }}</span>
+                <strong class="dns-record-kind">{{ record.kind }}</strong>
+                <div class="dns-record-field dns-record-host">
+                    <span>name</span><code data-record-host>{{ record.host }}</code>
+                </div>
+                <button type="button" class="secondary dns-copy" data-copy-value="{{ record.host }}">copy</button>
+                {% if let Some(priority) = record.priority %}
+                <div class="dns-record-field dns-record-priority">
+                    <span>priority</span><code data-record-priority>{{ priority }}</code>
+                </div>
+                <button type="button" class="secondary dns-copy" data-copy-value="{{ priority }}">copy</button>
+                {% endif %}
+                <div class="dns-record-field dns-record-value">
+                    <span>{{ record.value_label }}</span><code data-record-value>{{ record.provider_value }}</code>
+                </div>
+                <button type="button" class="secondary dns-copy" data-copy-value="{{ record.provider_value }}">copy</button>
+            </div>
+            {% endif %}
+        {%- endfor %}
+        </div>
+        <p class="dkim-pending" data-dkim-pending{% if !setup.dkim_pending %} hidden{% endif %}>
+            Generating the RSA and Ed25519 signing records…
+        </p>
+    </div>
+
+    <div class="dns-check-row">
+        <p data-checked-at>
+            {% if let Some(checked_at) = setup.checked_at %}
+            Last checked <time datetime="{{ checked_at|datetime_attribute }}">{{ checked_at|ui_datetime }}</time>
+            {% else %}
+            Not checked yet
+            {% endif %}
+        </p>
+        <p class="dns-check-error" data-dns-check-error role="status"></p>
+        <button type="button" class="secondary" data-dns-check>check again</button>
+    </div>
+</section>
+{% endblock %}

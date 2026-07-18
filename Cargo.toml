@@ -30,7 +30,13 @@ tokio = {
 tower = "0.5"
 tower-http = { version = "0.6", features = ["trace", "fs", "set-header"] }
 
-tokio-postgres = { version = "0.7", features = ["with-time-0_3"] }
+tokio-postgres = {
+	version = "0.7",
+	features = [
+		"with-time-0_3",
+		"with-serde_json-1",
+	],
+}
 rampart-codegen = { path = "db/rampart-codegen" }
 deadpool-postgres = { version = "0.14", features = ["rt_tokio_1"] }
 refinery = { version = "0.8", features = ["tokio-postgres"] }
@@ -50,7 +56,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 thiserror = "2"
 anyhow = "1"
 
-time = { version = "0.3", features = ["formatting", "serde", "serde-well-known"] }
+time = {
+	version = "0.3",
+	features = [
+		"formatting",
+		"serde",
+		"serde-well-known",
+	],
+}
 rand = "0.9"
 hex = "0.4"
 clap = { version = "4", features = ["derive", "env"] }
@@ -78,6 +91,7 @@ webauthn-rs = {
 	],
 }
 url = "2"
+hickory-resolver = "0.25"
 
 mail-parser = "0.11"
 async-trait = "0.1"

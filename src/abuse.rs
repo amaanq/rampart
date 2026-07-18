@@ -38,6 +38,10 @@ pub const RESET_APPLY: Limit = Limit {
     window: Duration::from_secs(3600),
     max: 20,
 };
+pub const DOMAIN_DNS_CHECK: Limit = Limit {
+    window: Duration::from_secs(60),
+    max: 20,
+};
 
 /// Returns `Ok(true)` if the hit is allowed (within cap), `Ok(false)` if throttled.
 pub async fn check(pool: &Pool, key: &str, limit: Limit) -> Result<bool> {

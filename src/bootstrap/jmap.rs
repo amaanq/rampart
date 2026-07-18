@@ -5,6 +5,8 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::time::Duration;
 
+use crate::domain_setup::DkimRecord;
+
 pub(crate) struct JmapClient {
     http: reqwest::Client,
     base_url: String,
@@ -160,6 +162,62 @@ impl JmapClient {
         let body = Self::first_body(&mr, &format!("x:{object}/get"))?;
         let list = body.get("list").and_then(|v| v.as_array());
         Ok(list.and_then(|a| a.first()).cloned())
+    }
+
+    /// DNS records for every active signing key on a named Domain.
+    pub(crate) async fn dkim_dns_records_for_domain(
+        &self,
+        domain_name: &str,
+    ) -> Result<Vec<DkimRecord>> {
+        let Some(domain_id) = self.query_by_name("Domain", domain_name).await? else {
+            return Ok(Vec::new());
+        };
+        let ids = self.query_dkim_signatures_for(&domain_id).await?;
+        let mut records = Vec::with_capacity(ids.len());
+        for id in ids {
+            let calls = json!([[
+                "x:DkimSignature/get",
+                {
+                    "ids": [id],
+                    "properties": ["@type", "selector", "stage", "publicKey"],
+                },
+                "0"
+            ]]);
+            let responses = self.call(calls).await?;
+            let body = Self::first_body(&responses, "x:DkimSignature/get")?;
+            let Some(item) = body
+                .get("list")
+                .and_then(Value::as_array)
+                .and_then(|list| list.first())
+            else {
+                continue;
+            };
+            if !item
+                .get("stage")
+                .and_then(Value::as_str)
+                .is_some_and(|stage| stage.eq_ignore_ascii_case("active"))
+            {
+                continue;
+            }
+            let algorithm = match item.get("@type").and_then(Value::as_str) {
+                Some("Dkim1RsaSha256") => "rsa",
+                Some("Dkim1Ed25519Sha256") => "ed25519",
+                _ => continue,
+            };
+            let Some(selector) = item.get("selector").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(public_key) = item.get("publicKey").and_then(Value::as_str) else {
+                continue;
+            };
+            records.push(DkimRecord {
+                algorithm: algorithm.to_owned(),
+                selector: selector.to_owned(),
+                value: format!("v=DKIM1; k={algorithm}; h=sha256; p={public_key}"),
+            });
+        }
+        records.sort_by(|a, b| a.algorithm.cmp(&b.algorithm));
+        Ok(records)
     }
 
     /// Create one item under temp id "i0"; returns the server-assigned id.

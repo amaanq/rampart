@@ -65,6 +65,7 @@ fn make_state(pool: deadpool_postgres::Pool) -> (WorkerState, Arc<MemorySubmit>)
         webauthn_rp_id: "localhost".into(),
         lmtp_listen: "127.0.0.1:0".parse().unwrap(),
         stalwart_hostname: STALWART_HOSTNAME.into(),
+        public_mx_hostname: STALWART_HOSTNAME.into(),
         lmtp_drain_secs: 20,
         stalwart_jmap_base_url: None,
         stalwart_admin_username: "admin".into(),

@@ -168,6 +168,11 @@ in
           dashboard vhost — mismatch = silent reply-path outage.
         '';
       };
+      publicMxHostname = mkOption {
+        type = types.str;
+        default = cfg.stalwart.authservId;
+        description = "Public hostname users publish as the MX target for alias domains.";
+      };
     };
 
     database = {
@@ -341,6 +346,7 @@ in
         RAMPART_STALWART_JMAP_BASE_URL = cfg.stalwart.jmapBaseUrl;
         RAMPART_STALWART_ADMIN_USERNAME = cfg.stalwart.adminUsername;
         RAMPART_STALWART_ADMIN_PASSWORD_FILE = "%d/stalwart_admin_password";
+        RAMPART_PUBLIC_MX_HOSTNAME = cfg.stalwart.publicMxHostname;
         RUST_LOG = "info,rampart=info,tower_http=info";
       };
     };

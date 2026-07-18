@@ -119,7 +119,7 @@ pub(super) async fn mailbox_delete(
         Ok(0) => Err(ApiError::NotFound),
         Ok(_) => Ok(StatusCode::NO_CONTENT),
         Err(e) if is_fk_violation(&e) => Err(ApiError::Conflict(
-            "mailbox has aliases pointing at it; reassign or delete them first".into(),
+            "mailbox has aliases pointing at it. Reassign or delete them first".into(),
         )),
         Err(e) => Err(ApiError::Db(e)),
     }

@@ -116,7 +116,7 @@ pub async fn invite(url: &str, preset_email: Option<String>) -> Result<()> {
         .unwrap_or_default();
     println!("invite token: {token}");
     println!("expires:      {ts}");
-    println!("give this to the friend; they visit /signup/{token}");
+    println!("give this to the friend. They visit /signup/{token}");
     if let Some(email) = preset_email {
         println!("preset email: {email} (they must sign up with exactly this)");
     }

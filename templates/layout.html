@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>rampart — {% block title %}dashboard{% endblock %}</title>
-    <link rel="stylesheet" href="/static/app.css?v=20260716">
+    <link rel="stylesheet" href="/static/app.css?v=20260718-domains3">
     <!--
         Configure htmx BEFORE loading it. Strict CSP (`style-src 'self'`)
         forbids inline <style>, but htmx defaults to injecting indicator
@@ -14,7 +14,7 @@
     <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"timeout":30000}'>
     <script src="/static/htmx.min.js" defer></script>
     <script src="/static/htmx-ext-json-enc.min.js" defer></script>
-    <script src="/static/app.js?v=20260716" defer></script>
+    <script src="/static/app.js?v=20260718-domains2" defer></script>
 </head>
 <body hx-swap="none">
 <header>
@@ -42,7 +42,7 @@
     </details>
     {% endblock %}
 </header>
-<main>
+<main class="{% block main_class %}{% endblock %}">
     {% block body %}{% endblock %}
 </main>
 </body>

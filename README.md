@@ -83,11 +83,16 @@ from your host config. Minimal wiring:
 
 ### DNS records (per alias domain)
 
+The dashboard renders the exact records for each domain and verifies them
+automatically. The two DKIM selectors and public keys come from Stalwart and
+are unique to the domain. A configured domain has this shape:
+
 ```
-addy.example.com.                MX    10 mail.example.com.
-addy.example.com.                TXT   "v=spf1 mx -all"
-_dmarc.addy.example.com.         TXT   "v=DMARC1; p=reject; adkim=s; aspf=s; rua=mailto:dmarc@example.com"
-stalwart._domainkey.addy.example.com.    CNAME  stalwart._domainkey.example.com.
+addy.example.com.                         MX    10 mx.rampart.email.
+addy.example.com.                         TXT   "v=spf1 mx ~all"
+_dmarc.addy.example.com.                  TXT   "v=DMARC1; p=quarantine;"
+<rsa-selector>._domainkey.addy.example.com.      TXT   "v=DKIM1; k=rsa; h=sha256; p=..."
+<ed25519-selector>._domainkey.addy.example.com.  TXT   "v=DKIM1; k=ed25519; h=sha256; p=..."
 ```
 
 ### Secrets

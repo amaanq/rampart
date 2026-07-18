@@ -23,6 +23,8 @@ pub struct Config {
 
     pub lmtp_listen: SocketAddr,
     pub stalwart_hostname: String,
+    /// Public MX target users publish for their alias domains.
+    pub public_mx_hostname: String,
     /// SIGTERM grace window for in-flight LMTP sessions. Default 20.
     pub lmtp_drain_secs: u64,
 
@@ -72,6 +74,9 @@ impl Config {
             .parse()
             .context("parsing RAMPART_LMTP_LISTEN")?;
         let stalwart_hostname = env_or("RAMPART_STALWART_HOSTNAME", &host_from_origin);
+        let public_mx_hostname = env_or("RAMPART_PUBLIC_MX_HOSTNAME", &stalwart_hostname)
+            .trim_end_matches('.')
+            .to_ascii_lowercase();
         let lmtp_drain_secs: u64 = env_or("RAMPART_LMTP_DRAIN_SECS", "20")
             .parse()
             .context("parsing RAMPART_LMTP_DRAIN_SECS")?;
@@ -120,6 +125,7 @@ impl Config {
             webauthn_rp_id,
             lmtp_listen,
             stalwart_hostname,
+            public_mx_hostname,
             lmtp_drain_secs,
             stalwart_jmap_base_url,
             stalwart_admin_username,

@@ -4,6 +4,7 @@
 
 mod abuse;
 mod api;
+mod domain_setup;
 mod error;
 mod quota;
 mod sieve;

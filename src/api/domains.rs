@@ -10,8 +10,10 @@ use deadpool_postgres::Client;
 use rampart_codegen::queries::{domains, users};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use time::OffsetDateTime;
 
 use crate::config::Config;
+use crate::domain_setup::{self, DkimRecord, DomainSetup};
 use crate::error::{ApiError, ApiResult};
 use crate::quota::{DEFAULT_MAX_DOMAINS, LOCK_CLASS_DOMAIN_CAP, lock_id};
 use crate::{AppState, bootstrap::JmapClient};
@@ -168,9 +170,118 @@ pub(super) async fn domain_delete(
             Ok(StatusCode::NO_CONTENT)
         }
         Err(e) if is_fk_violation(&e) => Err(ApiError::Conflict(
-            "domain has aliases; delete them first".into(),
+            "domain has aliases. Delete them first".into(),
         )),
         Err(e) => Err(ApiError::Db(e)),
+    }
+}
+
+pub(super) async fn domain_check(
+    State(state): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path(id): Path<i64>,
+) -> ApiResult<Json<DomainSetup>> {
+    let c = state.pool.get().await?;
+    let row = domains::by_id_for_user()
+        .bind(&c, &id, &p.user_id, &p.is_admin)
+        .opt()
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let allowed = crate::abuse::check(
+        &state.pool,
+        &format!("domain_dns_check:{}:{id}", p.user_id),
+        crate::abuse::DOMAIN_DNS_CHECK,
+    )
+    .await
+    .map_err(ApiError::Internal)?;
+    if !allowed {
+        return Err(ApiError::BadRequest(
+            "DNS was checked too often. Wait a moment and try again".into(),
+        ));
+    }
+
+    let dkim_records =
+        refresh_dkim_records(&c, row.id, &row.domain, &row.dkim_records, &state.config).await;
+    let previous_status = domain_setup::parse_dns_status(&row.dns_status);
+    let expected = domain_setup::build(
+        row.id,
+        &row.domain,
+        &state.config.public_mx_hostname,
+        &dkim_records,
+        &previous_status,
+        row.dns_checked_at,
+        row.dns_verified_at,
+    );
+    let status = domain_setup::check(&expected.records)
+        .await
+        .map_err(ApiError::Internal)?;
+    let now = OffsetDateTime::now_utc();
+    let checked = domain_setup::build(
+        row.id,
+        &row.domain,
+        &state.config.public_mx_hostname,
+        &dkim_records,
+        &status,
+        Some(now),
+        row.dns_verified_at,
+    );
+    let status_json = serde_json::to_value(&status).map_err(anyhow::Error::from)?;
+    domains::set_dns_check()
+        .bind(&c, &status_json, &now, &checked.all_verified(), &row.id)
+        .await?;
+    Ok(Json(checked))
+}
+
+async fn refresh_dkim_records(
+    c: &Client,
+    domain_id: i64,
+    domain: &str,
+    cached: &Value,
+    cfg: &Config,
+) -> Vec<DkimRecord> {
+    let current = domain_setup::parse_dkim_records(cached);
+    let complete = current.iter().any(|record| record.algorithm == "rsa")
+        && current.iter().any(|record| record.algorithm == "ed25519");
+    if complete {
+        return current;
+    }
+    let (Some(jmap_url), Some(password_path)) = (
+        cfg.stalwart_jmap_base_url.as_deref(),
+        cfg.stalwart_admin_password_file.as_deref(),
+    ) else {
+        return current;
+    };
+    let result = async {
+        let password = std::fs::read_to_string(password_path)
+            .map_err(anyhow::Error::from)?
+            .trim()
+            .to_owned();
+        let client = JmapClient::new(jmap_url, &cfg.stalwart_admin_username, &password)?;
+        client.dkim_dns_records_for_domain(domain).await
+    }
+    .await;
+    match result {
+        Ok(records) if !records.is_empty() => {
+            match serde_json::to_value(&records) {
+                Ok(value) => {
+                    if let Err(error) = domains::set_dkim_records()
+                        .bind(c, &value, &domain_id)
+                        .await
+                    {
+                        tracing::warn!(domain, ?error, "failed to cache DKIM setup records");
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(domain, ?error, "failed to serialize DKIM setup records");
+                }
+            }
+            records
+        }
+        Ok(_) => current,
+        Err(error) => {
+            tracing::warn!(domain, ?error, "DKIM setup records are not available yet");
+            current
+        }
     }
 }
 

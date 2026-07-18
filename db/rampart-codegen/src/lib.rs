@@ -27,5 +27,6 @@ pub use postgres::fallible_iterator;
 pub use tokio_postgres;
 #[cfg(any(feature = "deadpool", feature = "wasm-async"))]
 pub use tokio_postgres::fallible_iterator;
+pub use type_traits::JsonSql;
 pub use type_traits::{ArraySql, BytesSql, IterSql, StringSql};
 pub(crate) use utils::slice_iter;

@@ -63,6 +63,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/domain", post(domains::domain_create))
         .route("/api/v1/domain/{id}", patch(domains::domain_patch))
         .route("/api/v1/domain/{id}", delete(domains::domain_delete))
+        .route("/api/v1/domain/{id}/check", post(domains::domain_check))
         // user self-service
         .route("/api/v1/user/password", post(user::user_change_password))
         .route("/api/v1/user/email", post(user::user_start_email_change))

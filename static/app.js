@@ -10,8 +10,8 @@ function markCurrentNavigation() {
     let scope = 'header nav';
     if (path === '/' || path.startsWith('/aliases/')) {
         href = '/';
-    } else if (path === '/mailboxes' || path === '/domains' || path === '/settings') {
-        href = path;
+    } else if (path === '/mailboxes' || path.startsWith('/domains') || path === '/settings') {
+        href = path.startsWith('/domains') ? '/domains' : path;
     } else if (path === '/admin/users' || path === '/admin/domains') {
         href = path;
         scope = '.user-menu-panel';
@@ -224,6 +224,18 @@ document.body.addEventListener('htmx:afterRequest', function (e) {
     const form = requestForm(e);
     setFormPending(form, false);
     if (!e.detail.successful) return;
+    if (form && form.hasAttribute('data-domain-create')) {
+        try {
+            const created = JSON.parse(e.detail.xhr.responseText);
+            if (created && created.id) {
+                location.assign('/domains/' + encodeURIComponent(created.id));
+                return;
+            }
+        } catch (_) {
+            // The normal response handling below will surface/reload if the
+            // endpoint ever stops returning the created DomainView.
+        }
+    }
     if (form && form.dataset.success) {
         showFormStatus(form, form.dataset.success, false);
         if (form.hasAttribute('data-reset-on-success')) form.reset();
@@ -242,6 +254,160 @@ document.body.addEventListener('htmx:afterRequest', function (e) {
     if (t && t.dataset && t.dataset.reload === 'no') return;
     location.reload();
 });
+
+function copyText(value, button) {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) return;
+    navigator.clipboard.writeText(value).then(function () {
+        const original = button.textContent;
+        button.textContent = 'copied';
+        window.setTimeout(function () {
+            if (button.isConnected) button.textContent = original;
+        }, 900);
+    }).catch(function () {
+        showError('Could not copy to the clipboard.');
+    });
+}
+
+document.body.addEventListener('click', function (event) {
+    const button = event.target.closest('[data-copy-value]');
+    if (!button) return;
+    copyText(button.dataset.copyValue, button);
+});
+
+function dnsRecordElement(record) {
+    const row = document.createElement('div');
+    row.className = 'dns-record is-' + record.status + (record.priority == null ? '' : ' has-priority');
+    row.dataset.recordId = record.id;
+
+    const status = document.createElement('span');
+    status.className = 'dns-record-status';
+    status.dataset.recordStatus = '';
+    status.textContent = record.status === 'pending' ? 'waiting' : record.status;
+
+    const kind = document.createElement('strong');
+    kind.className = 'dns-record-kind';
+    kind.textContent = record.kind;
+
+    function field(className, label, value, dataName) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'dns-record-field ' + className;
+        const caption = document.createElement('span');
+        caption.textContent = label;
+        const code = document.createElement('code');
+        code.dataset[dataName] = '';
+        code.textContent = value;
+        wrapper.append(caption, code);
+        return wrapper;
+    }
+
+    function copyButton(value) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'secondary dns-copy';
+        button.dataset.copyValue = value;
+        button.textContent = 'copy';
+        return button;
+    }
+
+    const fields = [
+        status,
+        kind,
+        field('dns-record-host', 'name', record.host, 'recordHost'),
+        copyButton(record.host)
+    ];
+    if (record.priority != null) {
+        fields.push(
+            field('dns-record-priority', 'priority', String(record.priority), 'recordPriority'),
+            copyButton(String(record.priority))
+        );
+    }
+    fields.push(
+        field('dns-record-value', record.value_label, record.provider_value, 'recordValue'),
+        copyButton(record.provider_value)
+    );
+    row.append(...fields);
+    return row;
+}
+
+function formatUtc(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toISOString().slice(0, 19).replace('T', ' ') + ' UTC';
+}
+
+function initializeDomainSetup() {
+    const root = document.querySelector('[data-domain-setup]');
+    if (!root) return;
+    const checkButton = root.querySelector('[data-dns-check]');
+    const error = root.querySelector('[data-dns-check-error]');
+    let pollTimer = null;
+
+    function renderSetup(setup) {
+        root.dataset.state = setup.state;
+        const state = document.querySelector('[data-setup-state]');
+        state.className = 'domain-state is-' + setup.state;
+        state.textContent = setup.state;
+        document.querySelector('[data-setup-summary]').textContent = setup.summary;
+        root.querySelectorAll('[data-record-group]').forEach(function (group) {
+            group.replaceChildren();
+        });
+        setup.records.forEach(function (record) {
+            const group = root.querySelector('[data-record-group="' + record.group + '"]');
+            if (group) group.appendChild(dnsRecordElement(record));
+        });
+        root.querySelector('[data-dkim-pending]').hidden = !setup.dkim_pending;
+        const checked = root.querySelector('[data-checked-at]');
+        checked.textContent = setup.checked_at ? 'Last checked ' + formatUtc(setup.checked_at) : 'Not checked yet';
+    }
+
+    function schedulePoll() {
+        window.clearTimeout(pollTimer);
+        if (root.dataset.state === 'setup') {
+            pollTimer = window.setTimeout(checkDns, 6000);
+        }
+    }
+
+    async function checkDns() {
+        window.clearTimeout(pollTimer);
+        error.textContent = '';
+        checkButton.disabled = true;
+        checkButton.setAttribute('aria-busy', 'true');
+        try {
+            const response = await fetch('/api/v1/domain/' + encodeURIComponent(root.dataset.domainId) + '/check', {
+                method: 'POST',
+                headers: {'Accept': 'application/json'}
+            });
+            if (!response.ok) throw new Error(await response.text() || 'DNS check failed');
+            renderSetup(await response.json());
+            schedulePoll();
+        } catch (requestError) {
+            error.textContent = requestError.message;
+        } finally {
+            checkButton.disabled = false;
+            checkButton.removeAttribute('aria-busy');
+        }
+    }
+
+    checkButton.addEventListener('click', checkDns);
+    root.querySelector('[data-copy-all]').addEventListener('click', function (event) {
+        const lines = Array.from(root.querySelectorAll('.dns-record')).map(function (row) {
+            const fields = [
+                row.querySelector('.dns-record-kind').textContent,
+                row.querySelector('[data-record-host]').textContent
+            ];
+            const priority = row.querySelector('[data-record-priority]');
+            if (priority) fields.push(priority.textContent);
+            fields.push(row.querySelector('[data-record-value]').textContent);
+            return fields.join('\t');
+        });
+        copyText(lines.join('\n'), event.currentTarget);
+    });
+    if (root.dataset.state !== 'ready') {
+        pollTimer = window.setTimeout(checkDns, 700);
+    }
+}
+
+initializeDomainSetup();
 
 function clearError() {
     const el = document.getElementById('rampart-error-banner');

@@ -21,7 +21,7 @@
     <form hx-post="/api/v1/alias/custom/new" hx-ext="json-enc" hx-sync="this:drop">
         <label>prefix <input type="text" name="alias_prefix" required maxlength="64"
                              pattern="[A-Za-z0-9_+\-]|[A-Za-z0-9_+\-](?:[A-Za-z0-9_+\-]|\.(?!\.)){0,62}[A-Za-z0-9_+\-]"
-                             title="1–64 letters, numbers, dots, underscores, plus signs, or hyphens; no edge or consecutive dots"
+                             title="1–64 letters, numbers, dots, underscores, plus signs, or hyphens. Dots cannot appear at the edges or consecutively"
                              placeholder="e.g. github"></label>
         <label>domain <select name="domain">
             {%- for d in domains %}

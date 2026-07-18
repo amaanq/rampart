@@ -34,6 +34,10 @@ features = ["derive"]
 version = "1"
 features = ["derive"]
 
+[dependencies.serde_json]
+version = "1.0.149"
+features = ["raw_value"]
+
 [dependencies.time]
 version = "0.3"
 features = ["serde", "serde-well-known"]

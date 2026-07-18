@@ -6,6 +6,12 @@ pub struct ListForUserParams {
     pub is_admin: bool,
 }
 #[derive(Clone, Copy, Debug)]
+pub struct ByIdForUserParams {
+    pub domain_id: i64,
+    pub user_id: i64,
+    pub is_admin: bool,
+}
+#[derive(Clone, Copy, Debug)]
 pub struct ListForDashboardParams {
     pub user_id: i64,
     pub is_admin: bool,
@@ -30,6 +36,18 @@ pub struct SetRandomPrefixParams<T1: crate::StringSql> {
 #[derive(Clone, Copy, Debug)]
 pub struct SetDefaultMailboxParams {
     pub default_mailbox_id: Option<i64>,
+    pub domain_id: i64,
+}
+#[derive(Debug)]
+pub struct SetDkimRecordsParams<T1: crate::JsonSql> {
+    pub dkim_records: T1,
+    pub domain_id: i64,
+}
+#[derive(Debug)]
+pub struct SetDnsCheckParams<T1: crate::JsonSql> {
+    pub dns_status: T1,
+    pub checked_at: time::OffsetDateTime,
+    pub all_verified: bool,
     pub domain_id: i64,
 }
 #[derive(Clone, Copy, Debug)]
@@ -75,6 +93,12 @@ pub struct DomainRow {
     pub random_prefix: String,
     pub reply_prefix: String,
     pub default_mailbox_id: Option<i64>,
+    pub dkim_records: serde_json::Value,
+    pub dns_status: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub dns_checked_at: Option<time::OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub dns_verified_at: Option<time::OffsetDateTime>,
     pub nb_alias: i64,
 }
 pub struct DomainRowBorrowed<'a> {
@@ -86,6 +110,10 @@ pub struct DomainRowBorrowed<'a> {
     pub random_prefix: &'a str,
     pub reply_prefix: &'a str,
     pub default_mailbox_id: Option<i64>,
+    pub dkim_records: postgres_types::Json<&'a serde_json::value::RawValue>,
+    pub dns_status: postgres_types::Json<&'a serde_json::value::RawValue>,
+    pub dns_checked_at: Option<time::OffsetDateTime>,
+    pub dns_verified_at: Option<time::OffsetDateTime>,
     pub nb_alias: i64,
 }
 impl<'a> From<DomainRowBorrowed<'a>> for DomainRow {
@@ -99,6 +127,10 @@ impl<'a> From<DomainRowBorrowed<'a>> for DomainRow {
             random_prefix,
             reply_prefix,
             default_mailbox_id,
+            dkim_records,
+            dns_status,
+            dns_checked_at,
+            dns_verified_at,
             nb_alias,
         }: DomainRowBorrowed<'a>,
     ) -> Self {
@@ -111,6 +143,10 @@ impl<'a> From<DomainRowBorrowed<'a>> for DomainRow {
             random_prefix: random_prefix.into(),
             reply_prefix: reply_prefix.into(),
             default_mailbox_id,
+            dkim_records: serde_json::from_str(dkim_records.0.get()).unwrap(),
+            dns_status: serde_json::from_str(dns_status.0.get()).unwrap(),
+            dns_checked_at,
+            dns_verified_at,
             nb_alias,
         }
     }
@@ -123,6 +159,12 @@ pub struct ListForDashboard {
     pub owner_id: Option<i64>,
     pub random_prefix: String,
     pub reply_prefix: String,
+    pub dkim_records: serde_json::Value,
+    pub dns_status: serde_json::Value,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub dns_checked_at: Option<time::OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub dns_verified_at: Option<time::OffsetDateTime>,
     pub nb_alias: i64,
 }
 pub struct ListForDashboardBorrowed<'a> {
@@ -132,6 +174,10 @@ pub struct ListForDashboardBorrowed<'a> {
     pub owner_id: Option<i64>,
     pub random_prefix: &'a str,
     pub reply_prefix: &'a str,
+    pub dkim_records: postgres_types::Json<&'a serde_json::value::RawValue>,
+    pub dns_status: postgres_types::Json<&'a serde_json::value::RawValue>,
+    pub dns_checked_at: Option<time::OffsetDateTime>,
+    pub dns_verified_at: Option<time::OffsetDateTime>,
     pub nb_alias: i64,
 }
 impl<'a> From<ListForDashboardBorrowed<'a>> for ListForDashboard {
@@ -143,6 +189,10 @@ impl<'a> From<ListForDashboardBorrowed<'a>> for ListForDashboard {
             owner_id,
             random_prefix,
             reply_prefix,
+            dkim_records,
+            dns_status,
+            dns_checked_at,
+            dns_verified_at,
             nb_alias,
         }: ListForDashboardBorrowed<'a>,
     ) -> Self {
@@ -153,6 +203,10 @@ impl<'a> From<ListForDashboardBorrowed<'a>> for ListForDashboard {
             owner_id,
             random_prefix: random_prefix.into(),
             reply_prefix: reply_prefix.into(),
+            dkim_records: serde_json::from_str(dkim_records.0.get()).unwrap(),
+            dns_status: serde_json::from_str(dns_status.0.get()).unwrap(),
+            dns_checked_at,
+            dns_verified_at,
             nb_alias,
         }
     }
@@ -842,7 +896,7 @@ where
 pub struct ListForUserStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn list_for_user() -> ListForUserStmt {
     ListForUserStmt(
-        "SELECT d.id, d.domain::text AS domain, d.owner_id, d.shared, d.catch_all, d.random_prefix, d.reply_prefix, d.default_mailbox_id, (SELECT COUNT(*) FROM alias a WHERE a.domain_id = d.id) AS nb_alias FROM alias_domain d WHERE d.shared OR d.owner_id = $1 OR $2 ORDER BY d.id",
+        "SELECT d.id, d.domain::text AS domain, d.owner_id, d.shared, d.catch_all, d.random_prefix, d.reply_prefix, d.default_mailbox_id, d.dkim_records, d.dns_status, d.dns_checked_at, d.dns_verified_at, (SELECT COUNT(*) FROM alias a WHERE a.domain_id = d.id) AS nb_alias FROM alias_domain d WHERE d.shared OR d.owner_id = $1 OR $2 ORDER BY d.id",
         None,
     )
 }
@@ -876,7 +930,11 @@ impl ListForUserStmt {
                         random_prefix: row.try_get(5)?,
                         reply_prefix: row.try_get(6)?,
                         default_mailbox_id: row.try_get(7)?,
-                        nb_alias: row.try_get(8)?,
+                        dkim_records: row.try_get(8)?,
+                        dns_status: row.try_get(9)?,
+                        dns_checked_at: row.try_get(10)?,
+                        dns_verified_at: row.try_get(11)?,
+                        nb_alias: row.try_get(12)?,
                     })
                 },
             mapper: |it| DomainRow::from(it),
@@ -904,7 +962,7 @@ impl<'c, 'a, 's, C: GenericClient>
 pub struct ByIdStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn by_id() -> ByIdStmt {
     ByIdStmt(
-        "SELECT d.id, d.domain::text AS domain, d.owner_id, d.shared, d.catch_all, d.random_prefix, d.reply_prefix, d.default_mailbox_id, (SELECT COUNT(*) FROM alias a WHERE a.domain_id = d.id) AS nb_alias FROM alias_domain d WHERE d.id = $1",
+        "SELECT d.id, d.domain::text AS domain, d.owner_id, d.shared, d.catch_all, d.random_prefix, d.reply_prefix, d.default_mailbox_id, d.dkim_records, d.dns_status, d.dns_checked_at, d.dns_verified_at, (SELECT COUNT(*) FROM alias a WHERE a.domain_id = d.id) AS nb_alias FROM alias_domain d WHERE d.id = $1",
         None,
     )
 }
@@ -937,17 +995,88 @@ impl ByIdStmt {
                         random_prefix: row.try_get(5)?,
                         reply_prefix: row.try_get(6)?,
                         default_mailbox_id: row.try_get(7)?,
-                        nb_alias: row.try_get(8)?,
+                        dkim_records: row.try_get(8)?,
+                        dns_status: row.try_get(9)?,
+                        dns_checked_at: row.try_get(10)?,
+                        dns_verified_at: row.try_get(11)?,
+                        nb_alias: row.try_get(12)?,
                     })
                 },
             mapper: |it| DomainRow::from(it),
         }
     }
 }
+pub struct ByIdForUserStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn by_id_for_user() -> ByIdForUserStmt {
+    ByIdForUserStmt(
+        "SELECT d.id, d.domain::text AS domain, d.owner_id, d.shared, d.catch_all, d.random_prefix, d.reply_prefix, d.default_mailbox_id, d.dkim_records, d.dns_status, d.dns_checked_at, d.dns_verified_at, (SELECT COUNT(*) FROM alias a WHERE a.domain_id = d.id) AS nb_alias FROM alias_domain d WHERE d.id = $1 AND (d.shared OR d.owner_id = $2 OR $3)",
+        None,
+    )
+}
+impl ByIdForUserStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        domain_id: &'a i64,
+        user_id: &'a i64,
+        is_admin: &'a bool,
+    ) -> DomainRowQuery<'c, 'a, 's, C, DomainRow, 3> {
+        DomainRowQuery {
+            client,
+            params: [domain_id, user_id, is_admin],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor:
+                |row: &tokio_postgres::Row| -> Result<DomainRowBorrowed, tokio_postgres::Error> {
+                    Ok(DomainRowBorrowed {
+                        id: row.try_get(0)?,
+                        domain: row.try_get(1)?,
+                        owner_id: row.try_get(2)?,
+                        shared: row.try_get(3)?,
+                        catch_all: row.try_get(4)?,
+                        random_prefix: row.try_get(5)?,
+                        reply_prefix: row.try_get(6)?,
+                        default_mailbox_id: row.try_get(7)?,
+                        dkim_records: row.try_get(8)?,
+                        dns_status: row.try_get(9)?,
+                        dns_checked_at: row.try_get(10)?,
+                        dns_verified_at: row.try_get(11)?,
+                        nb_alias: row.try_get(12)?,
+                    })
+                },
+            mapper: |it| DomainRow::from(it),
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        ByIdForUserParams,
+        DomainRowQuery<'c, 'a, 's, C, DomainRow, 3>,
+        C,
+    > for ByIdForUserStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a ByIdForUserParams,
+    ) -> DomainRowQuery<'c, 'a, 's, C, DomainRow, 3> {
+        self.bind(client, &params.domain_id, &params.user_id, &params.is_admin)
+    }
+}
 pub struct ListForDashboardStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn list_for_dashboard() -> ListForDashboardStmt {
     ListForDashboardStmt(
-        "SELECT d.id, d.domain::text AS domain, d.shared, d.owner_id, d.random_prefix, d.reply_prefix, (SELECT COUNT(*) FROM alias a WHERE a.domain_id = d.id) AS nb_alias FROM alias_domain d WHERE d.shared OR d.owner_id = $1 OR $2 ORDER BY d.shared DESC, d.id",
+        "SELECT d.id, d.domain::text AS domain, d.shared, d.owner_id, d.random_prefix, d.reply_prefix, d.dkim_records, d.dns_status, d.dns_checked_at, d.dns_verified_at, (SELECT COUNT(*) FROM alias a WHERE a.domain_id = d.id) AS nb_alias FROM alias_domain d WHERE d.shared OR d.owner_id = $1 OR $2 ORDER BY d.shared DESC, d.id",
         None,
     )
 }
@@ -980,7 +1109,11 @@ impl ListForDashboardStmt {
                     owner_id: row.try_get(3)?,
                     random_prefix: row.try_get(4)?,
                     reply_prefix: row.try_get(5)?,
-                    nb_alias: row.try_get(6)?,
+                    dkim_records: row.try_get(6)?,
+                    dns_status: row.try_get(7)?,
+                    dns_checked_at: row.try_get(8)?,
+                    dns_verified_at: row.try_get(9)?,
+                    nb_alias: row.try_get(10)?,
                 })
             },
             mapper: |it| ListForDashboard::from(it),
@@ -1275,6 +1408,108 @@ impl<'a, C: GenericClient + Send + Sync>
         Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
     > {
         Box::pin(self.bind(client, &params.default_mailbox_id, &params.domain_id))
+    }
+}
+pub struct SetDkimRecordsStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn set_dkim_records() -> SetDkimRecordsStmt {
+    SetDkimRecordsStmt(
+        "UPDATE alias_domain SET dkim_records = $1 WHERE id = $2",
+        None,
+    )
+}
+impl SetDkimRecordsStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient, T1: crate::JsonSql>(
+        &'s self,
+        client: &'c C,
+        dkim_records: &'a T1,
+        domain_id: &'a i64,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[dkim_records, domain_id]).await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync, T1: crate::JsonSql>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        SetDkimRecordsParams<T1>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for SetDkimRecordsStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a SetDkimRecordsParams<T1>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(client, &params.dkim_records, &params.domain_id))
+    }
+}
+pub struct SetDnsCheckStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn set_dns_check() -> SetDnsCheckStmt {
+    SetDnsCheckStmt(
+        "UPDATE alias_domain SET dns_status = $1, dns_checked_at = $2, dns_verified_at = CASE WHEN $3 THEN COALESCE(dns_verified_at, $2) ELSE dns_verified_at END WHERE id = $4",
+        None,
+    )
+}
+impl SetDnsCheckStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient, T1: crate::JsonSql>(
+        &'s self,
+        client: &'c C,
+        dns_status: &'a T1,
+        checked_at: &'a time::OffsetDateTime,
+        all_verified: &'a bool,
+        domain_id: &'a i64,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client
+            .execute(self.0, &[dns_status, checked_at, all_verified, domain_id])
+            .await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync, T1: crate::JsonSql>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        SetDnsCheckParams<T1>,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for SetDnsCheckStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a SetDnsCheckParams<T1>,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(
+            client,
+            &params.dns_status,
+            &params.checked_at,
+            &params.all_verified,
+            &params.domain_id,
+        ))
     }
 }
 pub struct SetSharedStmt(&'static str, Option<tokio_postgres::Statement>);

@@ -15,6 +15,7 @@ use time::OffsetDateTime;
 
 use crate::AppState;
 use crate::auth::{self, AdminPrincipal, Principal};
+use crate::domain_setup::{self, DomainSetup};
 use crate::error::{ApiError, ApiResult};
 use crate::template_filters as filters;
 
@@ -28,6 +29,7 @@ pub fn router() -> Router<AppState> {
         .route("/", get(aliases_page))
         .route("/mailboxes", get(mailboxes_page))
         .route("/domains", get(domains_page))
+        .route("/domains/{id}", get(domain_setup_page))
         .route("/settings", get(settings_page))
         .route("/aliases/{id}/contacts", get(contacts_page))
         .route("/aliases/{id}/activity", get(activity_page))
@@ -64,6 +66,7 @@ pub struct DomainRowView {
     pub random_prefix: String,
     pub reply_prefix: String,
     pub nb_alias: i64,
+    pub setup_state: String,
 }
 
 pub type MailboxRowView = mailboxes::MailboxRow;
@@ -120,12 +123,23 @@ async fn aliases_page(
         .into_iter()
         .map(|row| DomainRowView {
             id: row.id,
-            domain: row.domain,
+            domain: row.domain.clone(),
             shared: row.shared,
             mine: row.owner_id == Some(p.user_id),
             random_prefix: row.random_prefix,
             reply_prefix: row.reply_prefix,
             nb_alias: row.nb_alias,
+            setup_state: domain_setup::build(
+                row.id,
+                &row.domain,
+                &state.config.public_mx_hostname,
+                &domain_setup::parse_dkim_records(&row.dkim_records),
+                &domain_setup::parse_dns_status(&row.dns_status),
+                row.dns_checked_at,
+                row.dns_verified_at,
+            )
+            .state_label
+            .to_owned(),
         })
         .collect();
     let has_verified_mailbox = mailboxes::first_verified_for_user()
@@ -191,17 +205,64 @@ async fn domains_page(
         .into_iter()
         .map(|row| DomainRowView {
             id: row.id,
-            domain: row.domain,
+            domain: row.domain.clone(),
             shared: row.shared,
             mine: row.owner_id == Some(p.user_id),
             random_prefix: row.random_prefix,
             reply_prefix: row.reply_prefix,
             nb_alias: row.nb_alias,
+            setup_state: domain_setup::build(
+                row.id,
+                &row.domain,
+                &state.config.public_mx_hostname,
+                &domain_setup::parse_dkim_records(&row.dkim_records),
+                &domain_setup::parse_dns_status(&row.dns_status),
+                row.dns_checked_at,
+                row.dns_verified_at,
+            )
+            .state_label
+            .to_owned(),
         })
         .collect();
     let user_email = lookup_user_email(&c, p.user_id).await?;
     Ok(render(&DomainsPage {
         domains,
+        user_email,
+        is_admin: p.is_admin,
+    })?)
+}
+
+#[derive(Template)]
+#[template(path = "domain_setup.html")]
+struct DomainSetupPage {
+    setup: DomainSetup,
+    user_email: String,
+    is_admin: bool,
+}
+
+async fn domain_setup_page(
+    State(state): State<AppState>,
+    Extension(p): Extension<Principal>,
+    Path(domain_id): Path<i64>,
+) -> ApiResult<Response> {
+    let c = state.pool.get().await?;
+    let row = domains::by_id_for_user()
+        .bind(&c, &domain_id, &p.user_id, &p.is_admin)
+        .opt()
+        .await?
+        .ok_or(ApiError::NotFound)?;
+    let setup = domain_setup::build(
+        row.id,
+        &row.domain,
+        &state.config.public_mx_hostname,
+        &domain_setup::parse_dkim_records(&row.dkim_records),
+        &domain_setup::parse_dns_status(&row.dns_status),
+        row.dns_checked_at,
+        row.dns_verified_at,
+    );
+    let user_email = lookup_user_email(&c, p.user_id).await?;
+    Ok(render(&DomainSetupPage {
+        setup,
         user_email,
         is_admin: p.is_admin,
     })?)

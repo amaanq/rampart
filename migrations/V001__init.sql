@@ -120,6 +120,16 @@ CREATE TABLE IF NOT EXISTS alias_domain (
     -- through the Sieve template and the worker's reverse-contact upsert.
     reply_prefix        TEXT NOT NULL DEFAULT 'ra+' CHECK (reply_prefix = 'ra+'),
     default_mailbox_id  BIGINT,                 -- FK added after mailbox created
+    -- Cached Stalwart DKIM public records and the most recent DNS observations
+    -- power the domain setup page without querying either service on list views.
+    dkim_records        JSONB NOT NULL DEFAULT '[]'::jsonb
+        CONSTRAINT alias_domain_dkim_records_array
+        CHECK (jsonb_typeof(dkim_records) = 'array'),
+    dns_status          JSONB NOT NULL DEFAULT '{}'::jsonb
+        CONSTRAINT alias_domain_dns_status_object
+        CHECK (jsonb_typeof(dns_status) = 'object'),
+    dns_checked_at      TIMESTAMPTZ,
+    dns_verified_at     TIMESTAMPTZ,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- Domain shape: lowercase ASCII labels (a-z 0-9 -), each up to 63

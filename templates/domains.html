@@ -1,39 +1,36 @@
 {% extends "layout.html" %}
 {% block title %}domains{% endblock %}
 {% block body %}
-<section class="card">
-    <h2>add your alias domain</h2>
-    <p class="hint">Domains are private by default. Administrators can make them shared.</p>
-    <form hx-post="/api/v1/domain" hx-ext="json-enc" hx-sync="this:drop">
+<section class="card domain-create-card">
+    <div>
+        <h2>add a domain</h2>
+        <p class="hint">Enter the domain once. We’ll show you exactly which DNS records to add.</p>
+    </div>
+    <form hx-post="/api/v1/domain" hx-ext="json-enc" hx-sync="this:drop" data-domain-create>
         <label>domain <input type="text" name="domain" required maxlength="253" autocapitalize="none" spellcheck="false"
                              pattern="[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)+"
-                             title="A domain name with at least one dot, e.g. aliases.example.com"></label>
-        <label>random prefix <input type="text" name="random_prefix" maxlength="54" autocapitalize="none" spellcheck="false"
-                                    pattern="[A-Za-z0-9_+\-]|[A-Za-z0-9_+\-](?:[A-Za-z0-9_+\-]|\.(?!\.)){0,52}[A-Za-z0-9_+\-]"
-                                    title="Up to 54 letters, numbers, dots, underscores, plus signs, or hyphens; no edge or consecutive dots"
-                                    placeholder="optional"></label>
-        <div class="form-action-row">
-            <p class="hint">Reply prefix is locked to <code>ra+</code> system-wide.</p>
-            <button type="submit">add</button>
-            <p class="form-status" data-form-status role="status" aria-live="polite"></p>
-        </div>
+                             title="A domain name with at least one dot, e.g. aliases.example.com"
+                             placeholder="aliases.example.com"></label>
+        <button type="submit">add domain</button>
+        <p class="form-status" data-form-status role="status" aria-live="polite"></p>
     </form>
 </section>
+
 <section>
-    <h2>alias domains you can use</h2>
+    <h2>your domains ({{ domains.len() }})</h2>
     {% if domains.is_empty() %}
     <div class="empty-state">
-        <p>No alias domains yet. Add one above to start creating aliases.</p>
+        <p>No domains yet. Add one above to start creating aliases.</p>
     </div>
     {% else %}
-    <table data-empty-message="No alias domains yet. Add one above to start creating aliases.">
-        <thead><tr><th>domain</th><th>kind</th><th>random prefix</th><th>aliases</th><th></th></tr></thead>
+    <table class="domains-table" data-empty-message="No domains yet. Add one above to start creating aliases.">
+        <thead><tr><th>domain</th><th>status</th><th>access</th><th>aliases</th><th></th></tr></thead>
         <tbody>
         {%- for d in domains %}
             <tr>
-                <td>{{ d.domain }}</td>
+                <td><a class="domain-name-link" href="/domains/{{ d.id }}">{{ d.domain }}</a></td>
+                <td><span class="domain-state is-{{ d.setup_state }}">{{ d.setup_state }}</span></td>
                 <td>{% if d.shared %}shared{% else if d.mine %}yours{% else %}admin{% endif %}</td>
-                <td>{% if d.random_prefix.is_empty() %}<span class="empty-value">&mdash;</span>{% else %}<code>{{ d.random_prefix }}</code>{% endif %}</td>
                 <td>{{ d.nb_alias }}</td>
                 <td>
                     {% if d.mine || is_admin %}

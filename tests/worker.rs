@@ -43,6 +43,7 @@ fn make_state() -> WorkerState {
         webauthn_rp_id: "localhost".into(),
         lmtp_listen: "127.0.0.1:0".parse().unwrap(),
         stalwart_hostname: "test.example".into(),
+        public_mx_hostname: "test.example".into(),
         lmtp_drain_secs: 20,
         stalwart_jmap_base_url: None,
         stalwart_admin_username: "admin".into(),
