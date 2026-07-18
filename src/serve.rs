@@ -821,7 +821,14 @@ async fn change_email_page(Path(token): Path<String>) -> Response {
 
 async fn change_email_post(State(state): State<AppState>, Path(token): Path<String>) -> Response {
     match crate::flows::apply_email_change(&state.pool, &token).await {
-        Ok(_email) => Redirect::to("/login").into_response(),
+        Ok(email) => render_simple_message(
+            StatusCode::OK,
+            "Email changed",
+            &format!("Your rampart sign-in email is now {email}."),
+            true,
+            "/settings",
+            "Go to settings",
+        ),
         Err(e) => render_error(&format!("email change failed: {e}")),
     }
 }

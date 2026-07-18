@@ -533,6 +533,15 @@ async fn change_email_page(Path(token): Path<String>) -> Response {
     confirm_page(token, "change-email").await
 }
 
+async fn change_email_post() -> Response {
+    render_simple_message_page(
+        "Email changed",
+        "Your rampart sign-in email has been updated.",
+        "/settings",
+        "Go to settings",
+    )
+}
+
 async fn mailbox_verify_page(Path(token): Path<String>) -> Response {
     confirm_page(token, "verify").await
 }
@@ -735,7 +744,10 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/signup/{token}", get(signup_page).post(signup_post))
         .route("/auth/forgot", get(forgot_page))
         .route("/auth/reset/{token}", get(reset_page).post(reset_post))
-        .route("/auth/change-email/{token}", get(change_email_page))
+        .route(
+            "/auth/change-email/{token}",
+            get(change_email_page).post(change_email_post),
+        )
         .route(
             "/mailbox/verify/{token}",
             get(mailbox_verify_page).post(mailbox_verify_post),
