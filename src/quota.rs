@@ -11,7 +11,7 @@
 /// search V001 for `COALESCE(max_aliases::bigint, 200)`.
 pub const DEFAULT_MAX_ALIASES: i64 = 200;
 /// Default per-user alias-domain cap when `user.max_domains` is NULL.
-pub const DEFAULT_MAX_DOMAINS: i64 = 5;
+pub const DEFAULT_MAX_DOMAINS: i64 = 67;
 
 /// Advisory-lock class IDs. Different classes don't block each other.
 pub const LOCK_CLASS_ALIAS_CAP: u8 = 1;
