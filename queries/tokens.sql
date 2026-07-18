@@ -35,6 +35,12 @@ UPDATE password_reset_token SET used_at = now()
 WHERE token_hash = :token_hash AND used_at IS NULL AND expires_at > now()
 RETURNING user_id;
 
+--! password_reset_failure
+SELECT used_at IS NOT NULL AS used,
+       expires_at <= now() AS expired
+FROM password_reset_token
+WHERE token_hash = :token_hash;
+
 --! email_change_create
 INSERT INTO email_change_token (token_hash, user_id, new_email, expires_at)
 VALUES (:token_hash, :user_id, :new_email, :expires_at);

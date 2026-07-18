@@ -708,6 +708,10 @@ async fn forgot_post(
 }
 
 async fn reset_page(Path(token): Path<String>) -> Response {
+    render_reset_page(StatusCode::OK, &token, None)
+}
+
+fn render_reset_page(status: StatusCode, token: &str, error: Option<&str>) -> Response {
     use askama::Template;
     #[derive(Template)]
     #[template(path = "reset.html")]
@@ -715,13 +719,10 @@ async fn reset_page(Path(token): Path<String>) -> Response {
         token: &'a str,
         error: Option<&'a str>,
     }
-    render_or_err(
-        (ResetPage {
-            token: &token,
-            error: None,
-        })
-        .render(),
-    )
+    match (ResetPage { token, error }).render() {
+        Ok(body) => (status, axum::response::Html(body)).into_response(),
+        Err(e) => ApiError::Template(e).into_response(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -741,7 +742,11 @@ async fn reset_post(
         crate::abuse::check(&state.pool, &key, crate::abuse::RESET_APPLY).await,
         Ok(false)
     ) {
-        return (StatusCode::TOO_MANY_REQUESTS, "slow down").into_response();
+        return render_reset_page(
+            StatusCode::TOO_MANY_REQUESTS,
+            &token,
+            Some("Too many reset attempts. Try again later."),
+        );
     }
     match crate::flows::apply_password_reset(
         &state.pool,
@@ -752,7 +757,38 @@ async fn reset_post(
     .await
     {
         Ok(()) => Redirect::to("/login").into_response(),
-        Err(e) => render_error(&format!("reset failed: {e}")),
+        Err(crate::flows::PasswordResetError::PasswordTooShort) => render_reset_page(
+            StatusCode::BAD_REQUEST,
+            &token,
+            Some("Password must be at least 10 characters."),
+        ),
+        Err(crate::flows::PasswordResetError::Invalid) => render_simple_message(
+            StatusCode::BAD_REQUEST,
+            "Reset link isn’t valid",
+            "Check that you opened the complete link from your password reset email.",
+            true,
+            "/auth/forgot",
+            "Request a new reset link",
+        ),
+        Err(crate::flows::PasswordResetError::Expired) => render_simple_message(
+            StatusCode::GONE,
+            "Reset link expired",
+            "This password reset link has expired. Request a new one to continue.",
+            true,
+            "/auth/forgot",
+            "Request a new reset link",
+        ),
+        Err(crate::flows::PasswordResetError::AlreadyUsed) => render_simple_message(
+            StatusCode::GONE,
+            "Reset link already used",
+            "This password reset link has already been used. Request a new one if you still need to change your password.",
+            true,
+            "/auth/forgot",
+            "Request a new reset link",
+        ),
+        Err(crate::flows::PasswordResetError::Internal(error)) => {
+            ApiError::Internal(error).into_response()
+        }
     }
 }
 

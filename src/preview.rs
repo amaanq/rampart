@@ -325,6 +325,30 @@ fn render<T: Template>(t: &T) -> Response {
     }
 }
 
+fn render_simple_message_page(
+    heading: &str,
+    message: &str,
+    link_href: &str,
+    link_label: &str,
+) -> Response {
+    #[derive(Template)]
+    #[template(path = "simple_message.html")]
+    struct SimpleMessage<'a> {
+        heading: &'a str,
+        message: &'a str,
+        show_link: bool,
+        link_href: &'a str,
+        link_label: &'a str,
+    }
+    render(&SimpleMessage {
+        heading,
+        message,
+        show_link: true,
+        link_href,
+        link_label,
+    })
+}
+
 fn user_email() -> String {
     "dev@dev.local (preview)".into()
 }
@@ -429,18 +453,36 @@ async fn forgot_page() -> Response {
     })
 }
 
-async fn reset_page(Path(token): Path<String>) -> Response {
+fn render_reset_page(token: &str, error: Option<&str>) -> Response {
     #[derive(Template)]
     #[template(path = "reset.html")]
     struct ResetPage<'a> {
         token: &'a str,
         error: Option<&'a str>,
     }
-    let r = ResetPage {
-        token: &token,
-        error: None,
+    render(&ResetPage { token, error })
+}
+
+async fn reset_page(Path(token): Path<String>) -> Response {
+    render_reset_page(&token, None)
+}
+
+async fn reset_post(Path(token): Path<String>) -> Response {
+    let (heading, message) = match token.as_str() {
+        "expired" => (
+            "Reset link expired",
+            "This password reset link has expired. Request a new one to continue.",
+        ),
+        "used" => (
+            "Reset link already used",
+            "This password reset link has already been used. Request a new one if you still need to change your password.",
+        ),
+        _ => (
+            "Reset link isn’t valid",
+            "Check that you opened the complete link from your password reset email.",
+        ),
     };
-    render(&r)
+    render_simple_message_page(heading, message, "/auth/forgot", "Request a new reset link")
 }
 
 async fn confirm_page(token: String, which: &str) -> Response {
@@ -489,22 +531,12 @@ async fn mailbox_verify_page(Path(token): Path<String>) -> Response {
 }
 
 async fn mailbox_verify_post() -> Response {
-    #[derive(Template)]
-    #[template(path = "simple_message.html")]
-    struct SimpleMessage<'a> {
-        heading: &'a str,
-        message: &'a str,
-        show_link: bool,
-        link_href: &'a str,
-        link_label: &'a str,
-    }
-    render(&SimpleMessage {
-        heading: "Mailbox verified",
-        message: "This mailbox is ready to use with rampart.",
-        show_link: true,
-        link_href: "/mailboxes",
-        link_label: "Go to mailboxes",
-    })
+    render_simple_message_page(
+        "Mailbox verified",
+        "This mailbox is ready to use with rampart.",
+        "/mailboxes",
+        "Go to mailboxes",
+    )
 }
 
 async fn setup_page() -> Response {
@@ -695,7 +727,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/login", get(login_page).post(login_post))
         .route("/signup/{token}", get(signup_page).post(signup_post))
         .route("/auth/forgot", get(forgot_page))
-        .route("/auth/reset/{token}", get(reset_page))
+        .route("/auth/reset/{token}", get(reset_page).post(reset_post))
         .route("/auth/change-email/{token}", get(change_email_page))
         .route(
             "/mailbox/verify/{token}",

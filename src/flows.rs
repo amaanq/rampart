@@ -39,6 +39,20 @@ pub enum InviteSignupError {
     Internal(#[from] anyhow::Error),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum PasswordResetError {
+    #[error("password must be at least 10 characters")]
+    PasswordTooShort,
+    #[error("password reset token is invalid")]
+    Invalid,
+    #[error("password reset token has expired")]
+    Expired,
+    #[error("password reset token has already been used")]
+    AlreadyUsed,
+    #[error(transparent)]
+    Internal(#[from] anyhow::Error),
+}
+
 fn generate_token() -> (String, Vec<u8>) {
     let mut bytes = [0u8; 24];
     rand::rngs::OsRng
@@ -193,29 +207,48 @@ pub async fn apply_password_reset(
     verify_cache: &crate::auth::VerifyCache,
     token: &str,
     new_password: &str,
-) -> Result<()> {
+) -> std::result::Result<(), PasswordResetError> {
     if new_password.len() < 10 {
-        anyhow::bail!("password must be at least 10 characters");
+        return Err(PasswordResetError::PasswordTooShort);
     }
-    let mut c = pool.get().await?;
+    let mut c = pool.get().await.context("opening password reset")?;
     let hash = hash_token(token);
 
-    let txn = c.transaction().await?;
+    let txn = c
+        .transaction()
+        .await
+        .context("starting password reset transaction")?;
     let Some(user_id) = tokens::password_reset_claim()
         .bind(&txn, &hash)
         .opt()
-        .await?
+        .await
+        .context("claiming password reset token")?
     else {
-        anyhow::bail!("invalid, expired, or already-used token");
+        let failure = tokens::password_reset_failure()
+            .bind(&txn, &hash)
+            .opt()
+            .await
+            .context("inspecting password reset failure")?;
+        txn.rollback().await.ok();
+        return Err(match failure {
+            None => PasswordResetError::Invalid,
+            Some(failure) if failure.used => PasswordResetError::AlreadyUsed,
+            Some(failure) if failure.expired => PasswordResetError::Expired,
+            Some(_) => PasswordResetError::Invalid,
+        });
     };
 
-    let pw_hash = hash_password(new_password)?;
+    let pw_hash = hash_password(new_password).context("hashing reset password")?;
 
     users::set_password()
         .bind(&txn, &Some(pw_hash), &user_id)
-        .await?;
-    sessions::delete_by_user().bind(&txn, &user_id).await?;
-    txn.commit().await?;
+        .await
+        .context("storing reset password")?;
+    sessions::delete_by_user()
+        .bind(&txn, &user_id)
+        .await
+        .context("ending sessions after password reset")?;
+    txn.commit().await.context("committing password reset")?;
 
     verify_cache.invalidate_user(user_id);
     tracing::info!(user_id, "password reset applied");

@@ -9,8 +9,9 @@ use support::TestDb;
 use hmac_sha256::Hash;
 use rampart::auth::VerifyCache;
 use rampart::flows::{
-    InviteSignupError, apply_email_change, apply_mailbox_verify, apply_password_reset,
-    claim_invite_and_create_user, start_email_change, start_mailbox_verify, start_password_reset,
+    InviteSignupError, PasswordResetError, apply_email_change, apply_mailbox_verify,
+    apply_password_reset, claim_invite_and_create_user, start_email_change, start_mailbox_verify,
+    start_password_reset,
 };
 use rampart::mailer::MemoryMailer;
 use time::{Duration, OffsetDateTime};
@@ -178,7 +179,7 @@ async fn reset_rejects_used_token() {
     let err = apply_password_reset(&db.pool, &cache, &token, "anotherone")
         .await
         .expect_err("second use must fail");
-    assert!(err.to_string().contains("invalid"), "got: {err}");
+    assert!(matches!(err, PasswordResetError::AlreadyUsed));
 
     db.teardown().await;
 }
@@ -208,7 +209,12 @@ async fn reset_rejects_expired_token() {
     let err = apply_password_reset(&db.pool, &cache, token, "validlongpw")
         .await
         .expect_err("expired must fail");
-    assert!(err.to_string().contains("invalid"), "got: {err}");
+    assert!(matches!(err, PasswordResetError::Expired));
+
+    let invalid = apply_password_reset(&db.pool, &cache, "not-a-real-reset-token", "validlongpw")
+        .await
+        .expect_err("unknown token must fail");
+    assert!(matches!(invalid, PasswordResetError::Invalid));
 
     db.teardown().await;
 }
