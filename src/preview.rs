@@ -683,12 +683,12 @@ async fn setup_post(Form(form): Form<PreviewSetupForm>) -> Response {
 }
 
 #[derive(Default, Deserialize)]
-struct PreviewAliasesQuery {
+struct PreviewEmptyQuery {
     #[serde(default)]
     empty: bool,
 }
 
-async fn aliases_page(Query(query): Query<PreviewAliasesQuery>) -> Response {
+async fn aliases_page(Query(query): Query<PreviewEmptyQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "aliases.html")]
     struct Page {
@@ -709,13 +709,7 @@ async fn aliases_page(Query(query): Query<PreviewAliasesQuery>) -> Response {
     })
 }
 
-#[derive(Default, Deserialize)]
-struct PreviewMailboxesQuery {
-    #[serde(default)]
-    empty: bool,
-}
-
-async fn mailboxes_page(Query(query): Query<PreviewMailboxesQuery>) -> Response {
+async fn mailboxes_page(Query(query): Query<PreviewEmptyQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "mailboxes.html")]
     struct Page {
@@ -734,13 +728,7 @@ async fn mailboxes_page(Query(query): Query<PreviewMailboxesQuery>) -> Response 
     })
 }
 
-#[derive(Default, Deserialize)]
-struct PreviewDomainsQuery {
-    #[serde(default)]
-    empty: bool,
-}
-
-async fn domains_page(Query(query): Query<PreviewDomainsQuery>) -> Response {
+async fn domains_page(Query(query): Query<PreviewEmptyQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "domains.html")]
     struct Page {
@@ -755,13 +743,7 @@ async fn domains_page(Query(query): Query<PreviewDomainsQuery>) -> Response {
     })
 }
 
-#[derive(Default, Deserialize)]
-struct PreviewSettingsQuery {
-    #[serde(default)]
-    empty: bool,
-}
-
-async fn settings_page(Query(query): Query<PreviewSettingsQuery>) -> Response {
+async fn settings_page(Query(query): Query<PreviewEmptyQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "settings.html")]
     struct Page {
@@ -776,7 +758,10 @@ async fn settings_page(Query(query): Query<PreviewSettingsQuery>) -> Response {
     })
 }
 
-async fn contacts_page(Path(_alias_id): Path<i64>) -> Response {
+async fn contacts_page(
+    Path(_alias_id): Path<i64>,
+    Query(query): Query<PreviewEmptyQuery>,
+) -> Response {
     #[derive(Template)]
     #[template(path = "contacts.html")]
     struct Page {
@@ -787,13 +772,16 @@ async fn contacts_page(Path(_alias_id): Path<i64>) -> Response {
     }
     render(&Page {
         alias_address: "github@dev.local".into(),
-        contacts: mock_contacts(),
+        contacts: if query.empty { vec![] } else { mock_contacts() },
         user_email: user_email(),
         is_admin: is_admin(),
     })
 }
 
-async fn activity_page(Path(_alias_id): Path<i64>) -> Response {
+async fn activity_page(
+    Path(_alias_id): Path<i64>,
+    Query(query): Query<PreviewEmptyQuery>,
+) -> Response {
     #[derive(Template)]
     #[template(path = "activity.html")]
     struct Page {
@@ -806,7 +794,11 @@ async fn activity_page(Path(_alias_id): Path<i64>) -> Response {
     }
     render(&Page {
         alias_address: "github@dev.local".into(),
-        activities: mock_activities(),
+        activities: if query.empty {
+            vec![]
+        } else {
+            mock_activities()
+        },
         page: 0,
         has_next: false,
         user_email: user_email(),
@@ -830,7 +822,7 @@ async fn admin_users_page() -> Response {
     })
 }
 
-async fn admin_domains_page() -> Response {
+async fn admin_domains_page(Query(query): Query<PreviewEmptyQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "admin_domains.html")]
     struct Page {
@@ -842,7 +834,11 @@ async fn admin_domains_page() -> Response {
     render(&Page {
         user_email: user_email(),
         is_admin: true,
-        domains: mock_admin_domains(),
+        domains: if query.empty {
+            vec![]
+        } else {
+            mock_admin_domains()
+        },
     })
 }
 

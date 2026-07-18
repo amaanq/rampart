@@ -3,6 +3,12 @@
 {% block body %}
 <section>
     <h2>alias domains (all)</h2>
+    {% if domains.is_empty() %}
+    <div class="empty-state">
+        <p>No alias domains yet. Add one before managing system-wide sharing.</p>
+        <a class="button-link" href="/domains">add domain</a>
+    </div>
+    {% else %}
     <table>
         <thead>
             <tr><th>id</th><th>domain</th><th>owner</th><th class="domain-sharing">shared</th><th>aliases</th><th></th></tr>
@@ -36,5 +42,6 @@
         {%- endfor %}
         </tbody>
     </table>
+    {% endif %}
 </section>
 {% endblock %}

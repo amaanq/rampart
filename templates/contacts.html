@@ -13,8 +13,9 @@
 
 <section>
     {%- if contacts.is_empty() %}
-    <p class="hint">No contacts yet. A reverse-contact is created the first time
-        someone sends mail to this alias.</p>
+    <div class="empty-state">
+        <p>No contacts yet. Senders will appear here after mail reaches this alias.</p>
+    </div>
     {%- else %}
     <table>
         <thead>

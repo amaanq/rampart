@@ -8,7 +8,9 @@
 
 <section>
     {%- if activities.is_empty() %}
-    <p class="hint">No activity yet.</p>
+    <div class="empty-state">
+        <p>No activity yet. Forwarding, blocks, and replies will appear here as mail moves through this alias.</p>
+    </div>
     {%- else %}
     <table>
         <thead>
