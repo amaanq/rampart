@@ -70,22 +70,71 @@ pub(super) async fn admin_user_enable(
     _: AdminPrincipal,
     Path(id): Path<i64>,
 ) -> ApiResult<StatusCode> {
-    let c = state.pool.get().await?;
-    users::enable().bind(&c, &id).await?;
-    Ok(StatusCode::NO_CONTENT)
+    set_admin_user_enabled(&state, None, id, true).await
 }
 
 pub(super) async fn admin_user_disable(
     State(state): State<AppState>,
-    _: AdminPrincipal,
+    AdminPrincipal(principal): AdminPrincipal,
     Path(id): Path<i64>,
 ) -> ApiResult<StatusCode> {
-    let c = state.pool.get().await?;
-    // Cascade: disable user, invalidate sessions + api_keys, disable aliases.
-    users::disable().bind(&c, &id).await?;
-    sessions::delete_by_user().bind(&c, &id).await?;
-    api_keys::revoke_all_for_user().bind(&c, &id).await?;
-    aliases::disable_all_for_user().bind(&c, &id).await?;
+    set_admin_user_enabled(&state, Some(principal.user_id), id, false).await
+}
+
+#[derive(Deserialize)]
+pub(super) struct AdminUserPatch {
+    enabled: bool,
+}
+
+pub(super) async fn admin_user_patch(
+    State(state): State<AppState>,
+    AdminPrincipal(principal): AdminPrincipal,
+    Path(id): Path<i64>,
+    Json(body): Json<AdminUserPatch>,
+) -> ApiResult<StatusCode> {
+    set_admin_user_enabled(&state, Some(principal.user_id), id, body.enabled).await
+}
+
+fn reject_self_disable(actor_id: Option<i64>, target_id: i64) -> ApiResult<()> {
+    if actor_id == Some(target_id) {
+        return Err(ApiError::BadRequest(
+            "you cannot disable your own account".into(),
+        ));
+    }
+    Ok(())
+}
+
+async fn set_admin_user_enabled(
+    state: &AppState,
+    actor_id: Option<i64>,
+    target_id: i64,
+    enabled: bool,
+) -> ApiResult<StatusCode> {
+    if enabled {
+        let c = state.pool.get().await?;
+        let updated = users::enable().bind(&c, &target_id).await?;
+        return if updated == 0 {
+            Err(ApiError::NotFound)
+        } else {
+            Ok(StatusCode::NO_CONTENT)
+        };
+    }
+
+    reject_self_disable(actor_id, target_id)?;
+    let mut c = state.pool.get().await?;
+    let txn = c.transaction().await?;
+    let updated = users::disable().bind(&txn, &target_id).await?;
+    if updated == 0 {
+        return Err(ApiError::NotFound);
+    }
+    sessions::delete_by_user().bind(&txn, &target_id).await?;
+    api_keys::revoke_all_for_user()
+        .bind(&txn, &target_id)
+        .await?;
+    aliases::disable_all_for_user()
+        .bind(&txn, &target_id)
+        .await?;
+    txn.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -147,4 +196,22 @@ pub(super) async fn admin_domain_set_shared(
     }
     txn.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn self_disable_is_rejected() {
+        assert!(matches!(
+            reject_self_disable(Some(7), 7),
+            Err(ApiError::BadRequest(message)) if message == "you cannot disable your own account"
+        ));
+    }
+
+    #[test]
+    fn another_user_can_be_disabled() {
+        assert!(reject_self_disable(Some(7), 8).is_ok());
+    }
 }

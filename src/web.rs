@@ -246,6 +246,7 @@ struct AdminUsersPage {
     /// can't see through the macro so the field looks dead-coded.
     #[allow(dead_code)]
     is_admin: bool,
+    current_user_id: i64,
     users: Vec<AdminUserRowView>,
 }
 
@@ -259,6 +260,7 @@ async fn admin_users_page(
     Ok(render(&AdminUsersPage {
         user_email,
         is_admin: p.is_admin,
+        current_user_id: p.user_id,
         users,
     })?)
 }

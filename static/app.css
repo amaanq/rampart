@@ -391,6 +391,14 @@ td button {
     font-size: .85rem;
     white-space: nowrap;
 }
+.admin-user-toggle { width: 4rem; padding-inline: .3rem; }
+.admin-current-user {
+    display: inline-block;
+    width: 4rem;
+    color: var(--muted);
+    font-size: .85rem;
+    text-align: center;
+}
 .alias-actions {
     display: flex;
     align-items: center;

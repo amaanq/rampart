@@ -98,6 +98,23 @@ function toggleRequestTarget(trigger) {
     const isSet = target.classList.toggle(className);
     const label = isSet ? trigger.dataset.labelWithClass : trigger.dataset.labelWithoutClass;
     if (label) trigger.textContent = label;
+
+    const classWith = trigger.dataset.classWithClass;
+    const classWithout = trigger.dataset.classWithoutClass;
+    if (classWith && classWithout) {
+        trigger.classList.remove(classWith, classWithout);
+        trigger.classList.add(isSet ? classWith : classWithout);
+    }
+
+    const confirmMessage = isSet
+        ? trigger.dataset.confirmWithClass
+        : trigger.dataset.confirmWithoutClass;
+    if (confirmMessage) {
+        trigger.setAttribute('hx-confirm', confirmMessage);
+    } else if (trigger.hasAttribute('data-confirm-with-class')
+        || trigger.hasAttribute('data-confirm-without-class')) {
+        trigger.removeAttribute('hx-confirm');
+    }
 }
 
 function updateBooleanToggle(trigger) {

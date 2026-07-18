@@ -289,8 +289,7 @@ async fn handle_reply(state: &WorkerState, rc_id: i64, mail_from: &str, raw: &[u
         let Some(r) = contacts::reply_join().bind(&c, &rc_id).opt().await? else {
             bail!("reverse_contact not found ({rc_id})");
         };
-        // admin_user_disable's cascade is non-transactional — recheck
-        // here closes the race against an in-flight reply.
+        // Reply addresses outlive later account, alias, and mailbox disables.
         if !r.rc_enabled
             || r.block_reply
             || !r.alias_enabled

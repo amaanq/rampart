@@ -24,6 +24,7 @@ pub fn router() -> Router<AppState> {
     let admin_routes = Router::new()
         .route("/api/v1/admin/users", get(admin::admin_users_list))
         .route("/api/v1/admin/users", post(admin::admin_user_create))
+        .route("/api/v1/admin/users/{id}", patch(admin::admin_user_patch))
         .route(
             "/api/v1/admin/users/{id}/enable",
             put(admin::admin_user_enable),

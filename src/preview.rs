@@ -844,11 +844,13 @@ async fn admin_users_page() -> Response {
         user_email: String,
         #[allow(dead_code)]
         is_admin: bool,
+        current_user_id: i64,
         users: Vec<uq::ListAdminCompact>,
     }
     render(&Page {
         user_email: user_email(),
         is_admin: true,
+        current_user_id: 1,
         users: mock_admin_users(),
     })
 }
@@ -965,6 +967,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/api/v1/contacts/{id}", delete(deleted))
         .route("/api/v1/user/webauthn/credentials/{id}", delete(deleted))
         .route("/api/v1/admin/domains/{id}/shared", put(updated))
+        .route("/api/v1/admin/users/{id}", patch(updated))
         .route("/api/v1/admin/users/{id}/enable", put(unauthorized))
         .route("/healthz", get(healthz))
         .nest_service("/static", static_files);

@@ -68,7 +68,7 @@ pub async fn user_list(url: &str) -> Result<()> {
 }
 
 pub async fn user_disable(url: &str, email: String) -> Result<()> {
-    let c = db::connect_once(url).await?;
+    let mut c = db::connect_once(url).await?;
     let Some(id) = users::by_email_id_unfiltered()
         .bind(&c, &email)
         .opt()
@@ -76,10 +76,12 @@ pub async fn user_disable(url: &str, email: String) -> Result<()> {
     else {
         bail!("no user with email '{email}'")
     };
-    users::disable().bind(&c, &id).await?;
-    sessions::delete_by_user().bind(&c, &id).await?;
-    api_keys::revoke_all_for_user().bind(&c, &id).await?;
-    aliases::disable_all_for_user().bind(&c, &id).await?;
+    let txn = c.transaction().await?;
+    users::disable().bind(&txn, &id).await?;
+    sessions::delete_by_user().bind(&txn, &id).await?;
+    api_keys::revoke_all_for_user().bind(&txn, &id).await?;
+    aliases::disable_all_for_user().bind(&txn, &id).await?;
+    txn.commit().await?;
     tracing::info!(id, email = %email, "user disabled (sessions cleared, api_keys revoked, aliases disabled)");
     Ok(())
 }
