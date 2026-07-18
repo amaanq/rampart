@@ -78,6 +78,7 @@ pub type ActivityRowView = email_log::ActivityForAlias;
 struct AliasesPage {
     aliases: Vec<AliasRowView>,
     domains: Vec<DomainRowView>,
+    has_verified_mailbox: bool,
     total: i64,
     user_email: String,
     is_admin: bool,
@@ -127,12 +128,18 @@ async fn aliases_page(
             nb_alias: row.nb_alias,
         })
         .collect();
+    let has_verified_mailbox = mailboxes::first_verified_for_user()
+        .bind(&c, &p.user_id)
+        .opt()
+        .await?
+        .is_some();
 
     let user_email = lookup_user_email(&c, p.user_id).await?;
 
     Ok(render(&AliasesPage {
         aliases,
         domains,
+        has_verified_mailbox,
         total,
         user_email,
         is_admin: p.is_admin,

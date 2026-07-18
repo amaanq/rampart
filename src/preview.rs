@@ -692,6 +692,10 @@ struct PreviewListQuery {
     empty: bool,
     #[serde(default)]
     single: bool,
+    #[serde(default)]
+    aliases_empty: bool,
+    #[serde(default)]
+    no_mailbox: bool,
 }
 
 fn preview_list<T>(query: &PreviewListQuery, mut rows: Vec<T>) -> Vec<T> {
@@ -709,15 +713,21 @@ async fn aliases_page(Query(query): Query<PreviewListQuery>) -> Response {
     struct Page {
         aliases: Vec<AliasRowView>,
         domains: Vec<DomainRowView>,
+        has_verified_mailbox: bool,
         total: i64,
         user_email: String,
         is_admin: bool,
     }
-    let aliases = preview_list(&query, mock_aliases());
+    let aliases = if query.aliases_empty {
+        vec![]
+    } else {
+        preview_list(&query, mock_aliases())
+    };
     let total = aliases.len() as i64;
     render(&Page {
         aliases,
         domains: preview_list(&query, mock_domains()),
+        has_verified_mailbox: !query.no_mailbox && !query.empty,
         total,
         user_email: user_email(),
         is_admin: is_admin(),

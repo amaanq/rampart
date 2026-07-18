@@ -75,7 +75,13 @@ function removeRequestTarget(trigger) {
     const message = table.dataset.emptyMessage;
     if (!message) return;
     const emptyState = document.createElement('div');
-    emptyState.className = 'empty-state';
+    const emptyClass = table.dataset.emptyClass;
+    emptyState.className = emptyClass || 'empty-state';
+    if (emptyClass) {
+        emptyState.textContent = message;
+        table.replaceWith(emptyState);
+        return;
+    }
     const copy = document.createElement('p');
     copy.textContent = message;
     emptyState.appendChild(copy);

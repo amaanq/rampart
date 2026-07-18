@@ -1,7 +1,7 @@
 {% extends "layout.html" %}
 {% block title %}aliases{% endblock %}
 {% block body %}
-{% if !domains.is_empty() %}
+{% if !domains.is_empty() && has_verified_mailbox %}
 <section class="card">
     <h2>new random alias</h2>
     <form hx-post="/api/v1/alias/random" hx-ext="json-enc" hx-sync="this:drop">
@@ -40,12 +40,23 @@
         <p>Aliases need a domain before you can create one.</p>
         <a class="button-link" href="/domains">add domain</a>
     </div>
+        {% else if !has_verified_mailbox %}
+    <div class="empty-state">
+        <p>Aliases need an enabled, verified mailbox before you can create one.</p>
+        <a class="button-link" href="/mailboxes">go to mailboxes</a>
+    </div>
         {% else %}
     <div class="empty-state">
         <p>No aliases yet. Create one above.</p>
     </div>
         {% endif %}
     {% else %}
+        {% if !has_verified_mailbox %}
+    <div class="empty-state list-notice">
+        <p>Alias creation is paused until you enable or verify a mailbox.</p>
+        <a class="button-link" href="/mailboxes">go to mailboxes</a>
+    </div>
+        {% endif %}
     <table data-empty-message="No aliases yet. Create one above.">
         <thead>
             <tr><th>address</th><th>forward to</th><th>note</th><th>fwd</th><th>last</th><th></th></tr>
