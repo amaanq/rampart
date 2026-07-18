@@ -99,7 +99,8 @@ pub(super) async fn user_start_email_change(
     Json(body): Json<ChangeEmailRequest>,
 ) -> ApiResult<StatusCode> {
     use std::str::FromStr;
-    lettre::Address::from_str(&body.new_email)
+    let new_email = body.new_email.trim();
+    lettre::Address::from_str(new_email)
         .map_err(|_| ApiError::BadRequest("Enter a valid email address.".into()))?;
     let ok = crate::abuse::check(
         &state.pool,
@@ -118,7 +119,7 @@ pub(super) async fn user_start_email_change(
         state.mailer.as_ref(),
         &state.config.public_origin,
         p.user_id,
-        &body.new_email,
+        new_email,
     )
     .await
     .map_err(|error| match error {

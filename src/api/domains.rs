@@ -19,7 +19,7 @@ use crate::{auth::Principal, bootstrap::Stats};
 
 use super::shared::{
     deserialize_opt_field, is_fk_violation, is_unique_violation, raise_exception_as_bad_request,
-    validate_domain, validate_random_prefix,
+    trimmed_nonempty, validate_domain, validate_random_prefix,
 };
 
 #[derive(Serialize)]
@@ -83,12 +83,14 @@ pub(super) async fn domain_create(
     Extension(p): Extension<Principal>,
     Json(body): Json<DomainCreate>,
 ) -> ApiResult<(StatusCode, Json<DomainView>)> {
-    validate_domain(&body.domain)?;
-    if let Some(rp) = body.random_prefix.as_deref() {
+    let domain = body.domain.trim().to_ascii_lowercase();
+    let random_prefix = trimmed_nonempty(body.random_prefix);
+    validate_domain(&domain)?;
+    if let Some(rp) = random_prefix.as_deref() {
         validate_random_prefix(rp)?;
     }
     let mut c = state.pool.get().await?;
-    let id = insert_domain(&mut c, p.user_id, &body.domain, body.random_prefix).await?;
+    let id = insert_domain(&mut c, p.user_id, &domain, random_prefix).await?;
     let view = domains::by_id().bind(&c, &id).one().await?;
     render_and_sync_sieve_if_configured(&mut c, &state.config).await?;
     Ok((StatusCode::CREATED, Json(DomainView::from_row(view, &p))))

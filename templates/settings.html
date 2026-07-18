@@ -9,8 +9,8 @@
           data-clear-on-error="[name='current_password']"
           data-focus-on-error="[name='current_password']"
           hx-post="/api/v1/user/password" hx-ext="json-enc">
-        <label>current password <input type="password" name="current_password" required></label>
-        <label>new password (min 10) <input type="password" name="new_password" minlength="10" required></label>
+        <label>current password <input type="password" name="current_password" autocomplete="current-password" required></label>
+        <label>new password (min 10) <input type="password" name="new_password" autocomplete="new-password" minlength="10" required></label>
         <button type="submit">change password</button>
         <p class="form-status" data-form-status role="status" aria-live="polite"></p>
     </form>
@@ -22,7 +22,7 @@
     <form id="email-change-form" data-reload="no"
           data-success="Confirmation sent. Check your new address." data-reset-on-success
           hx-post="/api/v1/user/email" hx-ext="json-enc">
-        <label>new email <input type="email" name="new_email" required></label>
+        <label>new email <input type="email" name="new_email" autocomplete="email" required></label>
         <button type="submit">send confirmation</button>
         <p class="form-status" data-form-status role="status" aria-live="polite"></p>
     </form>

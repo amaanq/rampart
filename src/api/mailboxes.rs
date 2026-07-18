@@ -13,7 +13,9 @@ use crate::AppState;
 use crate::auth::Principal;
 use crate::error::{ApiError, ApiResult};
 
-use super::shared::{deserialize_opt_field, is_fk_violation, is_unique_violation};
+use super::shared::{
+    deserialize_opt_field, is_fk_violation, is_unique_violation, trimmed_nonempty,
+};
 
 pub(super) type MailboxView = mailboxes::MailboxRow;
 
@@ -42,19 +44,21 @@ pub(super) async fn mailbox_create(
     Json(body): Json<MailboxCreate>,
 ) -> ApiResult<(StatusCode, Json<MailboxView>)> {
     let c = state.pool.get().await?;
+    let email = body.email.trim();
+    let display_name = trimmed_nonempty(body.display_name);
     // RFC 5321-ish parse via lettre — the bare `contains('@')` check let
     // typos like `alice@@example` through, which later wedged submit() on
     // first forward attempt. Same parser used in src/admin.rs add-mailbox.
     use std::str::FromStr;
-    lettre::Address::from_str(&body.email)
-        .map_err(|e| ApiError::BadRequest(format!("invalid email '{}': {e}", body.email)))?;
+    lettre::Address::from_str(email)
+        .map_err(|e| ApiError::BadRequest(format!("invalid email '{email}': {e}")))?;
     let id = mailboxes::create()
-        .bind(&c, &p.user_id, &body.email, &body.display_name)
+        .bind(&c, &p.user_id, &email, &display_name)
         .one()
         .await
         .map_err(|e| {
             if is_unique_violation(&e) {
-                ApiError::Conflict(format!("mailbox {} already exists", body.email))
+                ApiError::Conflict(format!("mailbox {email} already exists"))
             } else {
                 ApiError::Db(e)
             }

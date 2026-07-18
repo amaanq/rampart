@@ -18,7 +18,7 @@ use crate::quota::{DEFAULT_MAX_ALIASES, LOCK_CLASS_ALIAS_CAP, lock_id};
 
 use super::shared::{
     PAGE_SIZE, deserialize_opt_field, is_unique_violation, raise_exception_as_bad_request,
-    validate_local_part_fragment,
+    trimmed_nonempty, validate_local_part_fragment,
 };
 
 #[derive(Serialize)]
@@ -245,8 +245,9 @@ pub(super) async fn alias_random(
     let (dom, mb_id) = resolve_domain_and_mailbox(&c, &p, body.domain, body.mailbox_id).await?;
     let local = random_local_part(&dom.random_prefix);
     let addr = format!("{local}@{}", dom.domain);
+    let note = trimmed_nonempty(body.note);
 
-    let id = insert_alias(&mut c, p.user_id, &addr, dom.id, mb_id, &body.note, false).await?;
+    let id = insert_alias(&mut c, p.user_id, &addr, dom.id, mb_id, &note, false).await?;
     let row = aliases::by_id().bind(&c, &id).one().await?;
     Ok((StatusCode::CREATED, Json(row.into())))
 }
@@ -285,8 +286,9 @@ pub(super) async fn alias_custom_new(
         ));
     }
     let addr = format!("{local}@{}", dom.domain);
+    let note = trimmed_nonempty(body.note);
 
-    let id = insert_alias(&mut c, p.user_id, &addr, dom.id, mb_id, &body.note, false).await?;
+    let id = insert_alias(&mut c, p.user_id, &addr, dom.id, mb_id, &note, false).await?;
     let row = aliases::by_id().bind(&c, &id).one().await?;
     Ok((StatusCode::CREATED, Json(row.into())))
 }
@@ -350,11 +352,14 @@ async fn resolve_domain_and_mailbox(
     mailbox_id: Option<i64>,
 ) -> ApiResult<(domains::AliasDomainRow, i64)> {
     let dom = match domain {
-        Some(d) => domains::by_domain_for_user()
-            .bind(c, &d, &p.user_id, &p.is_admin)
-            .opt()
-            .await?
-            .ok_or_else(|| ApiError::BadRequest(format!("domain not accessible: {d}")))?,
+        Some(d) => {
+            let d = d.trim();
+            domains::by_domain_for_user()
+                .bind(c, &d, &p.user_id, &p.is_admin)
+                .opt()
+                .await?
+                .ok_or_else(|| ApiError::BadRequest(format!("domain not accessible: {d}")))?
+        }
         None => domains::first_accessible_for_user()
             .bind(c, &p.user_id, &p.is_admin)
             .opt()

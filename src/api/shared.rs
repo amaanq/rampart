@@ -152,6 +152,12 @@ pub(crate) fn validate_random_prefix(s: &str) -> Result<(), ApiError> {
     Ok(())
 }
 
+pub(crate) fn trimmed_nonempty(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+}
+
 /// Distinguishes "field absent in JSON" from "field present and null"
 /// for PATCH semantics: `Some(None)` is "set to null", `None` is
 /// "leave unchanged".
@@ -165,4 +171,19 @@ where
 
 pub(crate) fn hash_password(password: &str) -> ApiResult<String> {
     crate::auth::hash_password(password).map_err(ApiError::Internal)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trims_optional_user_text() {
+        assert_eq!(
+            trimmed_nonempty(Some("  useful  ".into())).as_deref(),
+            Some("useful")
+        );
+        assert_eq!(trimmed_nonempty(Some("   ".into())), None);
+        assert_eq!(trimmed_nonempty(None), None);
+    }
 }
