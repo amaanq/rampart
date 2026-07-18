@@ -240,27 +240,46 @@ async fn setup_page(State(state): State<AppState>) -> Response {
     // 404 once a user exists — the route is one-shot. We don't redirect
     // to /login here on purpose; an existing-system enumerator probing
     // /setup gets the same response as any unknown path.
-    if !user_table_empty(&state).await.unwrap_or(false) {
-        return (StatusCode::NOT_FOUND, "404").into_response();
+    match user_table_empty(&state).await {
+        Ok(true) => {}
+        Ok(false) => return (StatusCode::NOT_FOUND, "404").into_response(),
+        Err(error) => return error.into_response(),
     }
+    render_setup_page(&state, StatusCode::OK, None, "", "", false)
+}
+
+fn render_setup_page(
+    state: &AppState,
+    status: StatusCode,
+    error: Option<&str>,
+    email: &str,
+    display_name: &str,
+    focus_password: bool,
+) -> Response {
     use askama::Template;
     #[derive(Template)]
     #[template(path = "setup.html")]
     struct SetupPage<'a> {
         error: Option<&'a str>,
         csrf_token: &'a str,
+        email: &'a str,
+        display_name: &'a str,
+        focus_password: bool,
     }
     let token = new_setup_csrf_token();
     let body = match (SetupPage {
-        error: None,
+        error,
         csrf_token: &token,
+        email,
+        display_name,
+        focus_password,
     })
     .render()
     {
         Ok(b) => b,
         Err(e) => return ApiError::Template(e).into_response(),
     };
-    let mut resp = axum::response::Html(body).into_response();
+    let mut resp = (status, axum::response::Html(body)).into_response();
     resp.headers_mut().insert(
         header::SET_COOKIE,
         build_setup_csrf_cookie(&state, &token).parse().unwrap(),
@@ -286,16 +305,26 @@ async fn setup_post(
         Some(t) => t,
         None => {
             tracing::warn!("setup_post: missing CSRF cookie");
-            return (
+            return render_setup_page(
+                &state,
                 StatusCode::FORBIDDEN,
-                "Missing CSRF cookie — reload the page and try again.",
-            )
-                .into_response();
+                Some("This setup page expired. Review the details and try again."),
+                &form.email,
+                form.display_name.as_deref().unwrap_or(""),
+                true,
+            );
         }
     };
     if !constant_time_eq::constant_time_eq(cookie_token.as_bytes(), form.csrf_token.as_bytes()) {
         tracing::warn!("setup_post: CSRF token mismatch");
-        return (StatusCode::FORBIDDEN, "CSRF token mismatch").into_response();
+        return render_setup_page(
+            &state,
+            StatusCode::FORBIDDEN,
+            Some("This setup page expired. Review the details and try again."),
+            &form.email,
+            form.display_name.as_deref().unwrap_or(""),
+            true,
+        );
     }
 
     // The flow function's `INSERT ... WHERE NOT EXISTS` guard is the
@@ -314,7 +343,25 @@ async fn setup_post(
         Ok(None) => return (StatusCode::NOT_FOUND, "404").into_response(),
         Err(e) => {
             tracing::warn!(error = %e, "setup_post failed");
-            return setup_page_with_error(&state, &e.to_string());
+            let (status, message) = if e.to_string().contains("password must be") {
+                (
+                    StatusCode::BAD_REQUEST,
+                    "Password must be at least 10 characters.",
+                )
+            } else {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Couldn’t create the admin account. Try again.",
+                )
+            };
+            return render_setup_page(
+                &state,
+                status,
+                Some(message),
+                &form.email,
+                form.display_name.as_deref().unwrap_or(""),
+                true,
+            );
         }
     };
 
@@ -340,32 +387,6 @@ async fn setup_post(
     let mut resp = Redirect::to("/").into_response();
     resp.headers_mut()
         .insert(header::SET_COOKIE, cookie.parse().unwrap());
-    resp
-}
-
-fn setup_page_with_error(state: &AppState, msg: &str) -> Response {
-    use askama::Template;
-    #[derive(Template)]
-    #[template(path = "setup.html")]
-    struct SetupPage<'a> {
-        error: Option<&'a str>,
-        csrf_token: &'a str,
-    }
-    let token = new_setup_csrf_token();
-    let body = match (SetupPage {
-        error: Some(msg),
-        csrf_token: &token,
-    })
-    .render()
-    {
-        Ok(b) => b,
-        Err(e) => return ApiError::Template(e).into_response(),
-    };
-    let mut resp = (StatusCode::BAD_REQUEST, axum::response::Html(body)).into_response();
-    resp.headers_mut().insert(
-        header::SET_COOKIE,
-        build_setup_csrf_cookie(state, &token).parse().unwrap(),
-    );
     resp
 }
 

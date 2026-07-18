@@ -12,7 +12,7 @@
     <a href="/" class="brand">rampart</a>
     <section class="auth-card">
         <h1>Welcome to rampart</h1>
-        <p class="auth-hint">
+        <p class="auth-copy">
             No accounts exist yet. Create the first admin to start managing aliases, mailboxes, and pool domains.
         </p>
         {% if let Some(e) = error %}
@@ -21,11 +21,11 @@
         <form method="post" action="/setup" class="auth-form" data-native-submit data-pending-label="Creating admin…">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <label for="email">Email</label>
-            <input id="email" name="email" type="email" autocomplete="username" autofocus required>
+            <input id="email" name="email" type="email" value="{{ email }}" autocomplete="username" {% if !focus_password %}autofocus{% endif %} required>
             <label for="display_name">Display name <span class="auth-optional">(optional)</span></label>
-            <input id="display_name" name="display_name" type="text" autocomplete="name">
+            <input id="display_name" name="display_name" type="text" value="{{ display_name }}" autocomplete="name">
             <label for="password">Password <span class="auth-optional">(min 10 chars)</span></label>
-            <input id="password" name="password" type="password" autocomplete="new-password" minlength="10" required>
+            <input id="password" name="password" type="password" autocomplete="new-password" minlength="10" {% if focus_password %}autofocus{% endif %} required>
             <button type="submit" class="auth-submit">Create admin account</button>
         </form>
     </section>

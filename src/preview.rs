@@ -642,17 +642,48 @@ async fn mailbox_verify_post(Path(token): Path<String>) -> Response {
     render_simple_message_page(heading, message, "/mailboxes", "Go to mailboxes")
 }
 
-async fn setup_page() -> Response {
+fn render_setup_page(
+    error: Option<&str>,
+    email: &str,
+    display_name: &str,
+    focus_password: bool,
+) -> Response {
     #[derive(Template)]
     #[template(path = "setup.html")]
     struct SetupPage<'a> {
         error: Option<&'a str>,
         csrf_token: &'a str,
+        email: &'a str,
+        display_name: &'a str,
+        focus_password: bool,
     }
     render(&SetupPage {
-        error: None,
+        error,
         csrf_token: "preview-mode",
+        email,
+        display_name,
+        focus_password,
     })
+}
+
+async fn setup_page() -> Response {
+    render_setup_page(None, "", "", false)
+}
+
+#[derive(Deserialize)]
+struct PreviewSetupForm {
+    email: String,
+    #[serde(default)]
+    display_name: Option<String>,
+}
+
+async fn setup_post(Form(form): Form<PreviewSetupForm>) -> Response {
+    render_setup_page(
+        Some("This setup page expired. Review the details and try again."),
+        &form.email,
+        form.display_name.as_deref().unwrap_or(""),
+        true,
+    )
 }
 
 async fn aliases_page() -> Response {
@@ -839,7 +870,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
             "/mailbox/verify/{token}",
             get(mailbox_verify_page).post(mailbox_verify_post),
         )
-        .route("/setup", get(setup_page))
+        .route("/setup", get(setup_page).post(setup_post))
         .route("/", get(aliases_page))
         .route("/mailboxes", get(mailboxes_page))
         .route("/domains", get(domains_page))
