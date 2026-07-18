@@ -6,6 +6,8 @@
     <form id="password-change-form" data-reload="no"
           data-success="Password changed. Redirecting to sign in…"
           data-success-redirect="/login"
+          data-clear-on-error="[name='current_password']"
+          data-focus-on-error="[name='current_password']"
           hx-post="/api/v1/user/password" hx-ext="json-enc">
         <label>current password <input type="password" name="current_password" required></label>
         <label>new password (min 10) <input type="password" name="new_password" minlength="10" required></label>

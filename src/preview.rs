@@ -822,8 +822,16 @@ async fn healthz() -> &'static str {
     "ok"
 }
 
-async fn password_change() -> StatusCode {
-    StatusCode::NO_CONTENT
+#[derive(Deserialize)]
+struct PreviewPasswordChange {
+    current_password: String,
+}
+
+async fn password_change(Json(body): Json<PreviewPasswordChange>) -> Response {
+    if body.current_password == "wrong" {
+        return (StatusCode::BAD_REQUEST, "Current password is incorrect.").into_response();
+    }
+    StatusCode::NO_CONTENT.into_response()
 }
 
 #[derive(Deserialize)]

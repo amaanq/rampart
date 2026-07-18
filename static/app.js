@@ -44,6 +44,20 @@ function showFormStatus(form, message, isError) {
     return true;
 }
 
+function recoverFormFromError(form) {
+    if (!form) return;
+    const clearSelector = form.dataset.clearOnError;
+    if (clearSelector) {
+        form.querySelectorAll(clearSelector).forEach(function (input) {
+            input.value = '';
+        });
+    }
+    const focusSelector = form.dataset.focusOnError;
+    if (!focusSelector) return;
+    const target = form.querySelector(focusSelector);
+    if (target) target.focus();
+}
+
 function removeRequestTarget(trigger) {
     if (!trigger || !trigger.dataset || !trigger.dataset.removeClosest) return;
     const target = trigger.closest(trigger.dataset.removeClosest);
@@ -190,6 +204,7 @@ document.body.addEventListener('htmx:responseError', function (e) {
     const msg = (xhr.responseText || '').trim() || `${xhr.status} ${xhr.statusText}`;
     const form = requestForm(e);
     setFormPending(form, false);
+    recoverFormFromError(form);
     if (!showFormStatus(form, msg, true)) showError(msg);
 });
 document.body.addEventListener('htmx:sendError', function (e) {

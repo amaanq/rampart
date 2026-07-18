@@ -49,7 +49,7 @@ pub(super) async fn user_change_password(
 ) -> ApiResult<StatusCode> {
     if body.new_password.len() < 10 {
         return Err(ApiError::BadRequest(
-            "new password must be ≥ 10 chars".into(),
+            "New password must be at least 10 characters.".into(),
         ));
     }
     let mut c = state.pool.get().await?;
@@ -69,10 +69,14 @@ pub(super) async fn user_change_password(
         .await?;
     let stored: Option<String> = row.and_then(|r| r.get::<_, Option<String>>(0));
     let Some(stored) = stored else {
-        return Err(ApiError::BadRequest("no password set".into()));
+        return Err(ApiError::BadRequest(
+            "No password is set for this account.".into(),
+        ));
     };
     if !argon2::verify_encoded(&stored, body.current_password.as_bytes()).unwrap_or(false) {
-        return Err(ApiError::BadRequest("current password is wrong".into()));
+        return Err(ApiError::BadRequest(
+            "Current password is incorrect.".into(),
+        ));
     }
     let new_hash = hash_password(&body.new_password)?;
     users::set_password()
