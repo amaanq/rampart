@@ -2,6 +2,7 @@
 *
 
 # Top-level
+!.editorconfig
 !.envrc
 !.gitignore
 !.rustfmt.toml
