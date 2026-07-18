@@ -372,6 +372,11 @@ td button {
     content: "make private";
     visibility: hidden;
 }
+.domain-in-use {
+    color: var(--muted);
+    font-size: .85rem;
+    white-space: nowrap;
+}
 .alias-actions {
     display: flex;
     align-items: center;

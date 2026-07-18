@@ -26,16 +26,29 @@
         <p>No alias domains yet. Add one above to start creating aliases.</p>
     </div>
     {% else %}
-    <table>
-        <thead><tr><th>domain</th><th>kind</th><th>random prefix</th><th>reply prefix</th><th>aliases</th></tr></thead>
+    <table data-empty-message="No alias domains yet. Add one above to start creating aliases.">
+        <thead><tr><th>domain</th><th>kind</th><th>random prefix</th><th>aliases</th><th></th></tr></thead>
         <tbody>
         {%- for d in domains %}
             <tr>
                 <td>{{ d.domain }}</td>
                 <td>{% if d.shared %}shared{% else if d.mine %}yours{% else %}admin{% endif %}</td>
-                <td><code>{{ d.random_prefix }}</code></td>
-                <td><code>{{ d.reply_prefix }}</code></td>
+                <td>{% if d.random_prefix.is_empty() %}<span class="empty-value">&mdash;</span>{% else %}<code>{{ d.random_prefix }}</code>{% endif %}</td>
                 <td>{{ d.nb_alias }}</td>
+                <td>
+                    {% if d.mine || is_admin %}
+                        {% if d.nb_alias == 0 %}
+                    <button class="danger"
+                            aria-label="Delete domain {{ d.domain }}"
+                            hx-delete="/api/v1/domain/{{ d.id }}"
+                            data-reload="no"
+                            data-remove-closest="tr"
+                            hx-confirm="delete {{ d.domain }}?">delete</button>
+                        {% else %}
+                    <span class="domain-in-use" title="Delete aliases using this domain first">in use</span>
+                        {% endif %}
+                    {% endif %}
+                </td>
             </tr>
         {%- endfor %}
         </tbody>

@@ -125,7 +125,7 @@ fn mock_domains() -> Vec<DomainRowView> {
     let entries = [
         ("dev.local", false, true, "rnd", "ra+", 7),
         ("shared.example", true, false, "shared", "ra+", 3),
-        ("admin.example", false, false, "adm", "ra+", 0),
+        ("admin.example", false, false, "", "ra+", 0),
     ];
     entries
         .iter()
@@ -696,6 +696,8 @@ struct PreviewListQuery {
     aliases_empty: bool,
     #[serde(default)]
     no_mailbox: bool,
+    #[serde(default)]
+    deletable: bool,
 }
 
 fn preview_list<T>(query: &PreviewListQuery, mut rows: Vec<T>) -> Vec<T> {
@@ -757,8 +759,16 @@ async fn domains_page(Query(query): Query<PreviewListQuery>) -> Response {
         user_email: String,
         is_admin: bool,
     }
+    let domains = if query.deletable {
+        mock_domains()
+            .into_iter()
+            .filter(|domain| domain.nb_alias == 0)
+            .collect()
+    } else {
+        mock_domains()
+    };
     render(&Page {
-        domains: preview_list(&query, mock_domains()),
+        domains: preview_list(&query, domains),
         user_email: user_email(),
         is_admin: is_admin(),
     })
@@ -939,6 +949,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/api/v1/user/password", post(password_change))
         .route("/api/v1/user/email", post(email_change))
         .route("/api/v1/aliases/{id}", delete(deleted))
+        .route("/api/v1/domain/{id}", delete(deleted))
         .route("/api/v1/aliases/{id}/toggle", put(updated))
         .route("/api/v1/mailbox/{id}", patch(updated))
         .route("/api/v1/mailbox/{id}", delete(deleted))
