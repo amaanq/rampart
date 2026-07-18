@@ -29,12 +29,16 @@
 </section>
 
 <section class="card">
-    <h2>passkeys (Yubikey / WebAuthn)</h2>
+    <h2>passkeys</h2>
+    <p class="hint">Use a passkey or security key to sign in without your password.</p>
     <form id="passkey-register-form" data-reload="no">
-        <label>label (e.g. "work yubikey") <input type="text" id="pk-name" required></label>
+        <label>name <input type="text" id="pk-name" required placeholder="e.g. work YubiKey"></label>
         <button type="submit">register passkey</button>
         <p class="form-status" data-passkey-status role="status" aria-live="polite"></p>
     </form>
+    {% if passkeys.is_empty() %}
+    <p class="hint passkeys-empty">No passkeys registered yet.</p>
+    {% else %}
     <table class="passkeys-table">
         <thead><tr><th>name</th><th>created</th><th>last used</th><th></th></tr></thead>
         <tbody>
@@ -53,6 +57,7 @@
         {%- endfor %}
         </tbody>
     </table>
+    {% endif %}
 </section>
 <script src="/static/webauthn.js?v=20260716" defer></script>
 {% endblock %}

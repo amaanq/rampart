@@ -755,7 +755,13 @@ async fn domains_page(Query(query): Query<PreviewDomainsQuery>) -> Response {
     })
 }
 
-async fn settings_page() -> Response {
+#[derive(Default, Deserialize)]
+struct PreviewSettingsQuery {
+    #[serde(default)]
+    empty: bool,
+}
+
+async fn settings_page(Query(query): Query<PreviewSettingsQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "settings.html")]
     struct Page {
@@ -766,7 +772,7 @@ async fn settings_page() -> Response {
     render(&Page {
         user_email: user_email(),
         is_admin: is_admin(),
-        passkeys: mock_passkeys(),
+        passkeys: if query.empty { vec![] } else { mock_passkeys() },
     })
 }
 
