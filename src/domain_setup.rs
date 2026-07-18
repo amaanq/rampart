@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{
-   Context,
+   Context as _,
    Result,
 };
 use hickory_resolver::{
@@ -23,12 +23,13 @@ use serde::{
 };
 use serde_json::Value;
 use time::OffsetDateTime;
+use tokio::task::JoinSet;
 
 const SPF_VALUE: &str = "v=spf1 mx ~all";
 const DMARC_VALUE: &str = "v=DMARC1; p=quarantine;";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-pub(crate) struct DkimRecord {
+pub struct DkimRecord {
    pub algorithm: String,
    pub selector:  String,
    pub value:     String,
@@ -36,7 +37,7 @@ pub(crate) struct DkimRecord {
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum RecordStatus {
+pub enum RecordStatus {
    #[default]
    Pending,
    Found,
@@ -62,7 +63,7 @@ impl RecordStatus {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
-pub(crate) struct DnsObservation {
+pub struct DnsObservation {
    pub status:   RecordStatus,
    #[serde(default)]
    pub expected: String,
@@ -70,10 +71,10 @@ pub(crate) struct DnsObservation {
    pub observed: Vec<String>,
 }
 
-pub(crate) type DnsStatus = BTreeMap<String, DnsObservation>;
+pub type DnsStatus = BTreeMap<String, DnsObservation>;
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct SetupRecord {
+pub struct SetupRecord {
    pub id:             String,
    pub group:          &'static str,
    pub kind:           &'static str,
@@ -90,7 +91,7 @@ pub(crate) struct SetupRecord {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub(crate) enum SetupState {
+pub enum SetupState {
    Setup,
    Ready,
    Attention,
@@ -107,7 +108,7 @@ impl SetupState {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub(crate) struct DomainSetup {
+pub struct DomainSetup {
    pub domain_id:    i64,
    pub domain:       String,
    pub state:        SetupState,
@@ -129,15 +130,15 @@ impl DomainSetup {
    }
 }
 
-pub(crate) fn parse_dkim_records(value: &Value) -> Vec<DkimRecord> {
+pub fn parse_dkim_records(value: &Value) -> Vec<DkimRecord> {
    serde_json::from_value(value.clone()).unwrap_or_default()
 }
 
-pub(crate) fn parse_dns_status(value: &Value) -> DnsStatus {
+pub fn parse_dns_status(value: &Value) -> DnsStatus {
    serde_json::from_value(value.clone()).unwrap_or_default()
 }
 
-pub(crate) fn build(
+pub fn build(
    domain_id: i64,
    domain: &str,
    public_mx_hostname: &str,
@@ -281,9 +282,9 @@ fn provider_fields(kind: &str, value: &str) -> (String, &'static str, Option<u16
    )
 }
 
-pub(crate) async fn check(records: &[SetupRecord]) -> Result<DnsStatus> {
+pub async fn check(records: &[SetupRecord]) -> Result<DnsStatus> {
    let resolver = verification_resolver()?;
-   let mut tasks = tokio::task::JoinSet::new();
+   let mut tasks = JoinSet::new();
    for record in records.iter().cloned() {
       let resolver = resolver.clone();
       tasks.spawn(async move {
@@ -324,18 +325,27 @@ async fn check_one(resolver: &TokioResolver, record: &SetupRecord) -> Result<Dns
    let observed = match record.kind {
       "MX" => match resolver.mx_lookup(fqdn.as_str()).await {
          Ok(lookup) => lookup
+            .answers()
             .iter()
-            .map(|mx| format!("{} {}", mx.preference(), mx.exchange()))
+            .filter_map(|answer| match &answer.data {
+               &RData::MX(ref mx) => Some(format!("{} {}", mx.preference, mx.exchange)),
+               _ => None,
+            })
             .collect(),
          Err(error) if error.is_no_records_found() => Vec::new(),
          Err(error) => return Err(error).context(format!("looking up MX for {}", record.fqdn)),
       },
       "TXT" => match resolver.txt_lookup(fqdn.as_str()).await {
          Ok(lookup) => lookup
+            .answers()
             .iter()
+            .filter_map(|answer| match &answer.data {
+               &RData::TXT(ref txt) => Some(txt),
+               _ => None,
+            })
             .map(|txt| {
                let bytes = txt
-                  .txt_data()
+                  .txt_data
                   .iter()
                   .flat_map(|chunk| chunk.iter().copied())
                   .collect::<Vec<_>>();
@@ -372,15 +382,19 @@ fn absolute_dns_name(name: &str) -> String {
 
 fn values_match(kind: &str, observed: &str, expected: &str) -> bool {
    match kind {
-      "MX" => {
-         observed.trim().trim_end_matches('.').to_ascii_lowercase()
-            == expected.trim().trim_end_matches('.').to_ascii_lowercase()
-      },
+      "MX" => observed
+         .trim()
+         .trim_end_matches('.')
+         .eq_ignore_ascii_case(expected.trim().trim_end_matches('.')),
       _ => observed.trim() == expected.trim(),
    }
 }
 
 #[cfg(test)]
+#[expect(
+   clippy::inline_modules,
+   reason = "small cohesive test submodule kept inline"
+)]
 mod tests {
    use super::*;
 

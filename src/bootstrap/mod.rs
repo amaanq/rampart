@@ -10,12 +10,21 @@
 //! Singletons use id `"singleton"`. `List<T>` fields serialize as
 //! INDEXED OBJECTS `{"0":...}`, NOT JSON arrays — arrays silently
 //! invalidPatch.
+#![expect(clippy::print_stdout, reason = "CLI command output")]
 
-use std::path::PathBuf;
+use std::{
+   fs,
+   path::PathBuf,
+};
 
 use anyhow::{
-   Context,
+   Context as _,
    Result,
+};
+
+use crate::{
+   db,
+   sieve,
 };
 
 mod domains;
@@ -50,7 +59,7 @@ struct BootstrapArgs {
    lmtp_port:                      u16,
    alias_domains:                  Vec<String>,
    database_url:                   String,
-   sieve_path:                     std::path::PathBuf,
+   sieve_path:                     PathBuf,
    dry_run:                        bool,
 }
 
@@ -61,12 +70,13 @@ pub(crate) struct Stats {
    pub skipped: u32,
 }
 
+#[expect(clippy::cognitive_complexity, reason = "linear bootstrap sequence")]
 async fn run(args: BootstrapArgs) -> Result<()> {
-   let admin_password = std::fs::read_to_string(&args.admin_password_file)
+   let admin_password = fs::read_to_string(&args.admin_password_file)
       .with_context(|| format!("reading {}", args.admin_password_file.display()))?
       .trim()
       .to_owned();
-   let notifier_password = std::fs::read_to_string(&args.rampart_notifier_password_file)
+   let notifier_password = fs::read_to_string(&args.rampart_notifier_password_file)
       .with_context(|| format!("reading {}", args.rampart_notifier_password_file.display()))?
       .trim()
       .to_owned();
@@ -74,7 +84,7 @@ async fn run(args: BootstrapArgs) -> Result<()> {
    // alias_domain rows are the source of truth; --alias-domain CLI args
    // only seed a fresh deploy. Read table + rendered sieve under the
    // same advisory lock the API uses so a parallel CRUD can't interleave.
-   let mut pg_for_lock = crate::db::connect_once(&args.database_url).await?;
+   let mut pg_for_lock = db::connect_once(&args.database_url).await?;
    let lock_txn = pg_for_lock.transaction().await?;
    lock_txn
       .execute("SET LOCAL idle_in_transaction_session_timeout = 0", &[])
@@ -82,7 +92,7 @@ async fn run(args: BootstrapArgs) -> Result<()> {
       .context("disable idle-in-txn timeout for bootstrap lock")?;
    lock_txn
       .execute("SELECT pg_advisory_xact_lock($1::bigint)", &[
-         &crate::sieve::SIEVE_RENDER_LOCK_KEY,
+         &sieve::SIEVE_RENDER_LOCK_KEY,
       ])
       .await
       .context("pg_advisory_xact_lock for bootstrap")?;
@@ -94,7 +104,7 @@ async fn run(args: BootstrapArgs) -> Result<()> {
       .await?;
    let alias_domains: Vec<String> = alias_domains_rows
       .into_iter()
-      .map(|r| r.get::<_, String>("domain"))
+      .map(|row| row.get::<_, String>("domain"))
       .collect();
    // Render from the in-memory snapshot, not from disk. Reading sieve_path
    // here would push whatever the last render-sieve unit wrote, which can
@@ -102,9 +112,9 @@ async fn run(args: BootstrapArgs) -> Result<()> {
    // render unit ran) or skew after a manual edit. Rendering inside the
    // lock guarantees stage-branches and Sieve text reflect the same DB
    // snapshot, then we heal the on-disk file to match.
-   let sieve_contents_locked = crate::sieve::render_for_domains(&alias_domains).await?;
+   let sieve_contents_locked = sieve::render_for_domains(&alias_domains)?;
    if !args.dry_run {
-      crate::sieve::atomic_write_file(&args.sieve_path, sieve_contents_locked.as_bytes())
+      sieve::atomic_write_file(&args.sieve_path, sieve_contents_locked.as_bytes())
          .with_context(|| format!("writing {}", args.sieve_path.display()))?;
    }
 
@@ -115,8 +125,12 @@ async fn run(args: BootstrapArgs) -> Result<()> {
       let unhandled: Vec<&str> = args
          .alias_domains
          .iter()
-         .filter(|d| !alias_domains.iter().any(|x| x.eq_ignore_ascii_case(d)))
-         .map(|s| s.as_str())
+         .filter(|domain| {
+            !alias_domains
+               .iter()
+               .any(|existing| existing.eq_ignore_ascii_case(domain))
+         })
+         .map(String::as_str)
          .collect();
       if !unhandled.is_empty() {
          tracing::warn!(
@@ -153,13 +167,13 @@ async fn run(args: BootstrapArgs) -> Result<()> {
    // Marker-stamped Domains must exist before upsert_notifier — if the
    // notifier shares a domain with an alias_domain, an unmarked Domain
    // would block later marker adoption.
-   for d in &alias_domains {
-      domains::upsert_managed_alias_domain(&client, &mut stats, d, args.dry_run).await?;
+   for domain in &alias_domains {
+      domains::upsert_managed_alias_domain(&client, &mut stats, domain, args.dry_run).await?;
    }
    let notifier_domain = args
       .rampart_notifier_address
       .rsplit_once('@')
-      .map(|(_, d)| d.to_string())
+      .map(|(_, domain)| domain.to_owned())
       .unwrap_or_default();
    domains::reconcile_alias_domains(
       &client,
@@ -210,7 +224,13 @@ async fn run(args: BootstrapArgs) -> Result<()> {
    Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Run `rampart admin bootstrap-stalwart` from parsed CLI arguments.
+///
+/// # Errors
+///
+/// Returns an error if reading the password files, connecting to Postgres,
+/// rendering the Sieve script, or any JMAP registry push fails.
+#[expect(clippy::too_many_arguments, reason = "one-to-one mapping of CLI flags")]
 pub async fn cli(
    jmap_base_url: String,
    admin_username: String,
@@ -221,7 +241,7 @@ pub async fn cli(
    lmtp_port: u16,
    alias_domains: Vec<String>,
    database_url: String,
-   sieve_path: std::path::PathBuf,
+   sieve_path: PathBuf,
    dry_run: bool,
 ) -> Result<()> {
    run(BootstrapArgs {

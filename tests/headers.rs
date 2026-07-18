@@ -2,46 +2,55 @@
 //! `rampart::serve::security_headers_layer` against a tiny test router and
 //! asserts every header. Using the real function (rather than a copy)
 //! catches drift between prod and test.
+#![expect(clippy::tests_outside_test_module, reason = "integration test file")]
 
 use axum::{
    Router,
    body::Body,
    http::Request,
    middleware,
-   routing::get,
+   routing,
 };
 use rampart::serve::security_headers_layer;
-use tower::ServiceExt;
+use tower::ServiceExt as _;
 
 #[tokio::test]
 async fn security_headers_set_on_every_response() {
    let app = Router::new()
-      .route("/x", get(|| async { "hi" }))
+      .route("/x", routing::get(|| async { "hi" }))
       .layer(middleware::from_fn(security_headers_layer));
    let resp = app
       .oneshot(Request::builder().uri("/x").body(Body::empty()).unwrap())
       .await
       .unwrap();
 
-   let h = resp.headers();
+   let headers = resp.headers();
    assert_eq!(
-      h.get("X-Frame-Options").map(|v| v.to_str().unwrap()),
+      headers
+         .get("X-Frame-Options")
+         .map(|value| value.to_str().unwrap()),
       Some("DENY"),
    );
    assert_eq!(
-      h.get("X-Content-Type-Options").map(|v| v.to_str().unwrap()),
+      headers
+         .get("X-Content-Type-Options")
+         .map(|value| value.to_str().unwrap()),
       Some("nosniff"),
    );
    assert_eq!(
-      h.get("Referrer-Policy").map(|v| v.to_str().unwrap()),
+      headers
+         .get("Referrer-Policy")
+         .map(|value| value.to_str().unwrap()),
       Some("strict-origin-when-cross-origin"),
    );
    assert_eq!(
-      h.get("Permissions-Policy").map(|v| v.to_str().unwrap()),
+      headers
+         .get("Permissions-Policy")
+         .map(|value| value.to_str().unwrap()),
       Some("interest-cohort=()"),
    );
 
-   let csp = h
+   let csp = headers
       .get("Content-Security-Policy")
       .expect("CSP must be set")
       .to_str()

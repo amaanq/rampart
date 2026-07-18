@@ -1,17 +1,39 @@
 //! Shared test helpers. Spins up a unique throwaway database per test
 //! so the tests run in parallel without interfering. `RAMPART_TEST_DB_URL`
 //! must be set to a libpq connection string with CREATEDB privilege.
+#![expect(
+   clippy::print_stderr,
+   reason = "test helper reports skip reason to stderr"
+)]
+
+use std::{
+   env,
+   iter,
+};
 
 use anyhow::{
-   Context,
+   Context as _,
    Result,
 };
 use deadpool_postgres::Pool;
-use rand::Rng;
+use rampart::migrate;
+use rand::RngExt as _;
 use tokio_postgres::NoTls;
 
+#[expect(
+   clippy::partial_pub_fields,
+   reason = "test helper exposes handles, hides admin URL"
+)]
 pub struct TestDb {
-   #[allow(dead_code)]
+   #[expect(
+      clippy::allow_attributes,
+      reason = "dead_code varies per test binary (url is read only by gc.rs), so allow — not \
+                expect — is required"
+   )]
+   #[allow(
+      dead_code,
+      reason = "read only by gc.rs; dead in the other integration test binaries"
+   )]
    pub url:   String,
    pub name:  String,
    pub pool:  Pool,
@@ -23,17 +45,22 @@ impl TestDb {
    /// broken setup is legible. `or_skip` is what tests actually call
    /// — it interprets "missing env var" as a skip but bubbles real
    /// failures.
+   ///
+   /// # Errors
+   ///
+   /// Returns an error if `RAMPART_TEST_DB_URL` is unset, the admin or
+   /// per-test connection fails, `CREATE DATABASE` fails, or migrations
+   /// do not apply.
    pub async fn try_new() -> Result<Self> {
-      let admin_url =
-         std::env::var("RAMPART_TEST_DB_URL").context("RAMPART_TEST_DB_URL not set")?;
+      let admin_url = env::var("RAMPART_TEST_DB_URL").context("RAMPART_TEST_DB_URL not set")?;
       let name: String = format!(
          "rampart_test_{}",
-         (0..8)
-            .map(|_| {
-               let c: u8 = rand::rng().random_range(b'a'..=b'z');
-               c as char
-            })
-            .collect::<String>()
+         iter::repeat_with(|| {
+            let ch: u8 = rand::rng().random_range(b'a'..=b'z');
+            ch as char
+         })
+         .take(8)
+         .collect::<String>()
       );
 
       let (client, conn) = tokio_postgres::connect(&admin_url, NoTls)
@@ -50,15 +77,15 @@ impl TestDb {
       let url = rewrite_dbname(&admin_url, &name);
 
       let mut m_client = {
-         let (c, conn) = tokio_postgres::connect(&url, NoTls)
+         let (mig_client, mig_conn) = tokio_postgres::connect(&url, NoTls)
             .await
             .with_context(|| format!("connect new DB {name}"))?;
          tokio::spawn(async move {
-            let _ = conn.await;
+            let _ = mig_conn.await;
          });
-         c
+         mig_client
       };
-      rampart::migrate::runner()
+      migrate::runner()
          .run_async(&mut m_client)
          .await
          .context("apply migrations to test DB")?;
@@ -80,19 +107,25 @@ impl TestDb {
       })
    }
 
-   /// Open a TestDb, or `None` if the test should skip. With
+   /// Open a `TestDb`, or `None` if the test should skip. With
    /// `RAMPART_REQUIRE_DB_TESTS=1` (predeploy gate) any setup failure —
    /// missing env, unreachable DB, migration error — panics with the
    /// underlying error. Otherwise the test prints a WARN and skips.
+   ///
+   /// # Panics
+   ///
+   /// Panics when `RAMPART_REQUIRE_DB_TESTS` is set and setup fails, so
+   /// the predeploy gate hard-fails instead of silently skipping.
    pub async fn or_skip() -> Option<Self> {
       match Self::try_new().await {
          Ok(db) => Some(db),
-         Err(e) => {
-            if std::env::var("RAMPART_REQUIRE_DB_TESTS").is_ok() {
-               panic!("TestDb setup failed: {e:#}");
-            }
+         Err(err) => {
+            assert!(
+               env::var("RAMPART_REQUIRE_DB_TESTS").is_err(),
+               "TestDb setup failed: {err:#}"
+            );
             eprintln!(
-               "WARN: TestDb unavailable ({e}); skipping. Predeploy: set \
+               "WARN: TestDb unavailable ({err}); skipping. Predeploy: set \
                 RAMPART_REQUIRE_DB_TESTS=1 to hard-fail."
             );
             None
@@ -103,9 +136,8 @@ impl TestDb {
    pub async fn teardown(self) {
       // Close all pool connections so Postgres allows DROP DATABASE.
       drop(self.pool);
-      let (client, conn) = match tokio_postgres::connect(&self.admin_url, NoTls).await {
-         Ok(x) => x,
-         Err(_) => return,
+      let Ok((client, conn)) = tokio_postgres::connect(&self.admin_url, NoTls).await else {
+         return;
       };
       tokio::spawn(async move {
          let _ = conn.await;

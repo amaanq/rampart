@@ -20,38 +20,39 @@ pub struct Limit {
 }
 
 pub const FORGOT_PASSWORD: Limit = Limit {
-   window: Duration::from_secs(3600),
+   window: Duration::from_hours(1),
    max:    5,
 };
 pub const MAILBOX_VERIFY_RESEND: Limit = Limit {
-   window: Duration::from_secs(3600),
+   window: Duration::from_hours(1),
    max:    3,
 };
 pub const LOGIN_FAIL: Limit = Limit {
-   window: Duration::from_secs(600),
+   window: Duration::from_mins(10),
    max:    10,
 };
 pub const EMAIL_CHANGE: Limit = Limit {
-   window: Duration::from_secs(3600),
+   window: Duration::from_hours(1),
    max:    3,
 };
 pub const RESET_APPLY: Limit = Limit {
-   window: Duration::from_secs(3600),
+   window: Duration::from_hours(1),
    max:    20,
 };
 pub const DOMAIN_DNS_CHECK: Limit = Limit {
-   window: Duration::from_secs(60),
+   window: Duration::from_mins(1),
    max:    20,
 };
 
 /// Returns `Ok(true)` if the hit is allowed (within cap), `Ok(false)` if
 /// throttled.
 pub async fn check(pool: &Pool, key: &str, limit: Limit) -> Result<bool> {
-   let c = pool.get().await?;
+   let client = pool.get().await?;
    let now = OffsetDateTime::now_utc();
-   let window_start_min = now - time::Duration::seconds(limit.window.as_secs() as i64);
+   let window_secs = i64::try_from(limit.window.as_secs()).expect("rate-limit window fits in i64");
+   let window_start_min = now - time::Duration::seconds(window_secs);
    let count = rate_limit::check()
-      .bind(&c, &key, &now, &window_start_min)
+      .bind(&client, &key, &now, &window_start_min)
       .one()
       .await?;
    Ok(count <= limit.max)
@@ -60,7 +61,7 @@ pub async fn check(pool: &Pool, key: &str, limit: Limit) -> Result<bool> {
 /// Clear a bucket — useful after a successful login to discard
 /// accumulated failure counts.
 pub async fn clear(pool: &Pool, key: &str) -> Result<()> {
-   let c = pool.get().await?;
-   rate_limit::clear().bind(&c, &key).await?;
+   let client = pool.get().await?;
+   rate_limit::clear().bind(&client, &key).await?;
    Ok(())
 }

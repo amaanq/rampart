@@ -1,6 +1,7 @@
 //! Bounce-VERP path tests. Covers HMAC-verified DSNs flipping
-//! email_log.status to 'bounced', and refusing forged or
+//! `email_log.status` to 'bounced', and refusing forged or
 //! phase-mismatched VERPs.
+#![expect(clippy::tests_outside_test_module, reason = "integration test file")]
 
 mod support;
 
@@ -16,11 +17,14 @@ use rampart::{
          Rcpt,
       },
       pipeline::{
+         self,
          Delivery,
          Verdict,
-         process,
       },
-      resubmit::MemorySubmit,
+      resubmit::{
+         MemorySubmit,
+         Submit,
+      },
       verp,
    },
 };
@@ -58,41 +62,50 @@ fn make_state(pool: deadpool_postgres::Pool) -> (WorkerState, Arc<MemorySubmit>)
       verp_key:                     b"test-key-32-bytes-long-padding-padding".to_vec(),
    };
    let submit = Arc::new(MemorySubmit::new());
+   #[expect(
+      clippy::clone_on_ref_ptr,
+      reason = "clone coerces Arc<MemorySubmit> into the Arc<dyn Submit> field"
+   )]
+   let submit_dyn: Arc<dyn Submit> = submit.clone();
    let state = WorkerState {
       pool,
       config: Arc::new(cfg),
       mailer: Arc::new(MemoryMailer::new()),
-      submit: submit.clone(),
+      submit: submit_dyn,
    };
    (state, submit)
 }
 
-async fn seed_alias(c: &deadpool_postgres::Client) {
-   c.execute(
-      "INSERT INTO \"user\" (email, password_hash) VALUES ('alice@test', 'x')",
-      &[],
-   )
-   .await
-   .unwrap();
-   c.execute(
-      "INSERT INTO mailbox (user_id, email, verified) VALUES (1, 'alice@gmail.com', TRUE)",
-      &[],
-   )
-   .await
-   .unwrap();
-   c.execute(
-      "INSERT INTO alias_domain (domain, owner_id, shared) VALUES ('addy.test', 1, FALSE)",
-      &[],
-   )
-   .await
-   .unwrap();
-   c.execute(
-      "INSERT INTO alias (user_id, address, domain_id, mailbox_id) VALUES (1, 'abc@addy.test', 1, \
-       1)",
-      &[],
-   )
-   .await
-   .unwrap();
+async fn seed_alias(client: &deadpool_postgres::Client) {
+   client
+      .execute(
+         "INSERT INTO \"user\" (email, password_hash) VALUES ('alice@test', 'x')",
+         &[],
+      )
+      .await
+      .unwrap();
+   client
+      .execute(
+         "INSERT INTO mailbox (user_id, email, verified) VALUES (1, 'alice@gmail.com', TRUE)",
+         &[],
+      )
+      .await
+      .unwrap();
+   client
+      .execute(
+         "INSERT INTO alias_domain (domain, owner_id, shared) VALUES ('addy.test', 1, FALSE)",
+         &[],
+      )
+      .await
+      .unwrap();
+   client
+      .execute(
+         "INSERT INTO alias (user_id, address, domain_id, mailbox_id) VALUES (1, 'abc@addy.test', \
+          1, 1)",
+         &[],
+      )
+      .await
+      .unwrap();
 }
 
 /// Minimal RFC 3464 multipart/report body with a Diagnostic-Code line.
@@ -109,12 +122,12 @@ fn dsn_msg(diagnostic: &str) -> Vec<u8> {
 }
 
 async fn insert_log(
-   c: &deadpool_postgres::Client,
+   client: &deadpool_postgres::Client,
    action: &str,
    status: &str,
    reason: Option<&str>,
 ) -> i64 {
-   let row = c
+   let row = client
       .query_one(
          "INSERT INTO email_log (alias_id, action, status, reason, from_address) VALUES (1, $1, \
           $2, $3, 'sender@x') RETURNING id",
@@ -131,22 +144,22 @@ async fn bounce_valid_hmac_marks_row_bounced() {
    let (state, _submit) = make_state(db.pool.clone());
 
    let log_id = {
-      let c = db.pool.get().await.unwrap();
-      seed_alias(&c).await;
-      insert_log(&c, "forward", "submitted", None).await
+      let client = db.pool.get().await.unwrap();
+      seed_alias(&client).await;
+      insert_log(&client, "forward", "submitted", None).await
    };
 
    let payload = verp::make_local_payload(&state.config.verp_key, BouncePhase::Forward, log_id);
-   let v = process(&state, Delivery {
+   let verdict = pipeline::process(&state, Delivery {
       rcpt:      Rcpt::Bounce { payload },
       mail_from: "<>".into(),
       raw:       dsn_msg("550 5.1.1 user unknown"),
    })
    .await;
-   assert!(matches!(v, Verdict::Delivered), "got {v:?}");
+   assert!(matches!(verdict, Verdict::Delivered), "got {verdict:?}");
 
-   let c = db.pool.get().await.unwrap();
-   let row = c
+   let client = db.pool.get().await.unwrap();
+   let row = client
       .query_one("SELECT status, reason FROM email_log WHERE id = $1", &[
          &log_id,
       ])
@@ -166,23 +179,23 @@ async fn bounce_forged_hmac_does_not_mutate() {
    let (state, _submit) = make_state(db.pool.clone());
 
    let log_id = {
-      let c = db.pool.get().await.unwrap();
-      seed_alias(&c).await;
-      insert_log(&c, "forward", "submitted", None).await
+      let client = db.pool.get().await.unwrap();
+      seed_alias(&client).await;
+      insert_log(&client, "forward", "submitted", None).await
    };
 
    // Right shape, wrong HMAC.
    let forged = format!("f+{log_id}+AAAAAAAAAAAAAAAA");
-   let v = process(&state, Delivery {
+   let verdict = pipeline::process(&state, Delivery {
       rcpt:      Rcpt::Bounce { payload: forged },
       mail_from: "<>".into(),
       raw:       dsn_msg("550 anything"),
    })
    .await;
-   assert!(matches!(v, Verdict::Delivered), "got {v:?}");
+   assert!(matches!(verdict, Verdict::Delivered), "got {verdict:?}");
 
-   let c = db.pool.get().await.unwrap();
-   let status: String = c
+   let client = db.pool.get().await.unwrap();
+   let status: String = client
       .query_one("SELECT status FROM email_log WHERE id = $1", &[&log_id])
       .await
       .unwrap()
@@ -197,23 +210,23 @@ async fn bounce_phase_mismatch_no_mutation() {
    let (state, _submit) = make_state(db.pool.clone());
 
    let log_id = {
-      let c = db.pool.get().await.unwrap();
-      seed_alias(&c).await;
+      let client = db.pool.get().await.unwrap();
+      seed_alias(&client).await;
       // Insert as 'reply' but bounce as 'forward'.
-      insert_log(&c, "reply", "submitted", None).await
+      insert_log(&client, "reply", "submitted", None).await
    };
 
    let payload = verp::make_local_payload(&state.config.verp_key, BouncePhase::Forward, log_id);
-   let v = process(&state, Delivery {
+   let verdict = pipeline::process(&state, Delivery {
       rcpt:      Rcpt::Bounce { payload },
       mail_from: "<>".into(),
       raw:       dsn_msg("550 anything"),
    })
    .await;
-   assert!(matches!(v, Verdict::Delivered), "got {v:?}");
+   assert!(matches!(verdict, Verdict::Delivered), "got {verdict:?}");
 
-   let c = db.pool.get().await.unwrap();
-   let status: String = c
+   let client = db.pool.get().await.unwrap();
+   let status: String = client
       .query_one("SELECT status FROM email_log WHERE id = $1", &[&log_id])
       .await
       .unwrap()
@@ -228,23 +241,23 @@ async fn bounce_already_bounced_idempotent() {
    let (state, _submit) = make_state(db.pool.clone());
 
    let log_id = {
-      let c = db.pool.get().await.unwrap();
-      seed_alias(&c).await;
-      insert_log(&c, "forward", "bounced", Some("first reason")).await
+      let client = db.pool.get().await.unwrap();
+      seed_alias(&client).await;
+      insert_log(&client, "forward", "bounced", Some("first reason")).await
    };
 
    let payload = verp::make_local_payload(&state.config.verp_key, BouncePhase::Forward, log_id);
-   let v = process(&state, Delivery {
+   let verdict = pipeline::process(&state, Delivery {
       rcpt:      Rcpt::Bounce { payload },
       mail_from: "<>".into(),
       raw:       dsn_msg("550 second reason"),
    })
    .await;
-   assert!(matches!(v, Verdict::Delivered), "got {v:?}");
+   assert!(matches!(verdict, Verdict::Delivered), "got {verdict:?}");
 
    // Already-bounced row: reason must not be overwritten.
-   let c = db.pool.get().await.unwrap();
-   let reason: String = c
+   let client = db.pool.get().await.unwrap();
+   let reason: String = client
       .query_one("SELECT reason FROM email_log WHERE id = $1", &[&log_id])
       .await
       .unwrap()

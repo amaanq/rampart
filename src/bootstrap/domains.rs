@@ -1,6 +1,9 @@
 //! Alias-domain marker logic — `Domain.description` distinguishes
 //! rampart-managed Domains from user-managed ones, so reconcile never destroys
 //! unrelated mail domains.
+#![expect(clippy::print_stdout, reason = "CLI command output")]
+
+use std::slice;
 
 use anyhow::{
    Result,
@@ -18,7 +21,11 @@ use super::{
 
 const RAMPART_DOMAIN_MARKER: &str = "[rampart-managed]";
 
-pub(crate) async fn upsert_managed_alias_domain(
+#[expect(
+   clippy::cognitive_complexity,
+   reason = "linear marker-heal sequence for one Domain"
+)]
+pub async fn upsert_managed_alias_domain(
    client: &JmapClient,
    stats: &mut Stats,
    name: &str,
@@ -34,7 +41,7 @@ pub(crate) async fn upsert_managed_alias_domain(
          .unwrap_or(Value::Null);
       let current = body
          .get("description")
-         .and_then(|v| v.as_str())
+         .and_then(|value| value.as_str())
          .unwrap_or("");
       if current == RAMPART_DOMAIN_MARKER {
          if dry_run {
@@ -42,7 +49,13 @@ pub(crate) async fn upsert_managed_alias_domain(
             stats.skipped += 1;
             return Ok(());
          }
-         if !is_canonical_managed(&body) {
+         if is_canonical_managed(&body) {
+            stats.skipped += 1;
+            tracing::info!(
+               domain = name,
+               "marker-owned Domain already canonical, skipping"
+            );
+         } else {
             client
                .set_update("Domain", &id, canonical_managed_patch())
                .await?;
@@ -50,12 +63,6 @@ pub(crate) async fn upsert_managed_alias_domain(
             tracing::info!(
                domain = name,
                "marker-owned Domain re-asserted to canonical state"
-            );
-         } else {
-            stats.skipped += 1;
-            tracing::info!(
-               domain = name,
-               "marker-owned Domain already canonical, skipping"
             );
          }
          // Stalwart only schedules DKIM keygen on Manual→Automatic;
@@ -138,36 +145,36 @@ fn canonical_dkim_management() -> Value {
 }
 
 fn is_canonical_managed(body: &Value) -> bool {
-   body.get("isEnabled").and_then(|v| v.as_bool()) == Some(true)
-      && body.get("description").and_then(|v| v.as_str()) == Some(RAMPART_DOMAIN_MARKER)
-      && body.get("allowRelaying").and_then(|v| v.as_bool()) == Some(false)
+   body.get("isEnabled").and_then(Value::as_bool) == Some(true)
+      && body.get("description").and_then(|value| value.as_str()) == Some(RAMPART_DOMAIN_MARKER)
+      && body.get("allowRelaying").and_then(Value::as_bool) == Some(false)
       && body
          .get("subAddressing")
-         .and_then(|v| v.get("@type"))
-         .and_then(|v| v.as_str())
+         .and_then(|value| value.get("@type"))
+         .and_then(|value| value.as_str())
          == Some("Enabled")
       && body
          .get("certificateManagement")
-         .and_then(|v| v.get("@type"))
-         .and_then(|v| v.as_str())
+         .and_then(|value| value.get("@type"))
+         .and_then(|value| value.as_str())
          == Some("Manual")
       && body
          .get("dnsManagement")
-         .and_then(|v| v.get("@type"))
-         .and_then(|v| v.as_str())
+         .and_then(|value| value.get("@type"))
+         .and_then(|value| value.as_str())
          == Some("Manual")
       && body
          .get("dkimManagement")
-         .and_then(|v| v.get("@type"))
-         .and_then(|v| v.as_str())
+         .and_then(|value| value.get("@type"))
+         .and_then(|value| value.as_str())
          == Some("Automatic")
 }
 
-/// Destroy rampart-managed Domains not in `keep`. DkimSignature children must
+/// Destroy rampart-managed Domains not in `keep`. `DkimSignature` children must
 /// go first (stalwart returns `objectIsLinked` otherwise). Bails early if
 /// `notifier_domain` is in the destroy set, since the Account → Domain FK
 /// would fail mid-chain after we've already disabled the Domain.
-pub(crate) async fn reconcile_alias_domains(
+pub async fn reconcile_alias_domains(
    client: &JmapClient,
    stats: &mut Stats,
    keep: &[String],
@@ -179,19 +186,22 @@ pub(crate) async fn reconcile_alias_domains(
       .await?;
    let mut to_destroy = Vec::<(String, String)>::new();
    for item in &all {
-      let id = item.get("id").and_then(|v| v.as_str()).unwrap_or_default();
+      let id = item
+         .get("id")
+         .and_then(|value| value.as_str())
+         .unwrap_or_default();
       let name = item
          .get("name")
-         .and_then(|v| v.as_str())
+         .and_then(|value| value.as_str())
          .unwrap_or_default();
       let desc = item
          .get("description")
-         .and_then(|v| v.as_str())
+         .and_then(|value| value.as_str())
          .unwrap_or_default();
       if id.is_empty() || name.is_empty() || desc != RAMPART_DOMAIN_MARKER {
          continue;
       }
-      if keep.iter().any(|k| k.eq_ignore_ascii_case(name)) {
+      if keep.iter().any(|kept| kept.eq_ignore_ascii_case(name)) {
          continue;
       }
       if name.eq_ignore_ascii_case(notifier_domain) {
@@ -219,7 +229,7 @@ pub(crate) async fn reconcile_alias_domains(
       if !dkim_ids.is_empty() {
          client.set_destroy("DkimSignature", &dkim_ids).await?;
       }
-      client.set_destroy("Domain", &[id.clone()]).await?;
+      client.set_destroy("Domain", slice::from_ref(&id)).await?;
       stats.patched += 1;
       tracing::info!(
          domain = name,

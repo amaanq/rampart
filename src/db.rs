@@ -1,9 +1,9 @@
 //! Postgres connection pool and the typed row structs we actually use.
 //! Pool via deadpool-postgres; dedicated client for migrations.
-//! Phase-1 deployment uses local Unix-socket postgres with NoTls.
+//! Phase-1 deployment uses local Unix-socket postgres with `NoTls`.
 
 use anyhow::{
-   Context,
+   Context as _,
    Result,
 };
 use deadpool_postgres::{
@@ -15,6 +15,11 @@ use deadpool_postgres::{
 };
 use tokio_postgres::NoTls;
 
+/// Build the shared deadpool-postgres connection pool.
+///
+/// # Errors
+///
+/// Returns an error if the pool cannot be created from `url`.
 pub fn build_pool(url: &str) -> Result<Pool> {
    let mut cfg = Config::new();
    cfg.url = Some(url.to_owned());
@@ -27,13 +32,18 @@ pub fn build_pool(url: &str) -> Result<Pool> {
    Ok(pool)
 }
 
+/// Open a single dedicated postgres client, spawning its connection task.
+///
+/// # Errors
+///
+/// Returns an error if connecting to `url` fails.
 pub async fn connect_once(url: &str) -> Result<tokio_postgres::Client> {
    let (client, connection) = tokio_postgres::connect(url, NoTls)
       .await
       .with_context(|| format!("connecting to postgres: {url}"))?;
    tokio::spawn(async move {
-      if let Err(e) = connection.await {
-         tracing::error!(error = ?e, "postgres connection task ended with error");
+      if let Err(err) = connection.await {
+         tracing::error!(error = ?err, "postgres connection task ended with error");
       }
    });
    Ok(client)

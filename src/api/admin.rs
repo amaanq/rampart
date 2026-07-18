@@ -17,10 +17,7 @@ use rampart_codegen::queries::{
 };
 use serde::Deserialize;
 
-use super::shared::{
-   hash_password,
-   is_unique_violation,
-};
+use super::shared;
 use crate::{
    AppState,
    auth::AdminPrincipal,
@@ -34,8 +31,8 @@ pub(super) async fn admin_users_list(
    State(state): State<AppState>,
    _: AdminPrincipal,
 ) -> ApiResult<Json<serde_json::Value>> {
-   let c = state.pool.get().await?;
-   let users = users::list_admin().bind(&c).all().await?;
+   let conn = state.pool.get().await?;
+   let users = users::list_admin().bind(&conn).all().await?;
    Ok(Json(serde_json::json!({"users": users})))
 }
 
@@ -59,11 +56,11 @@ pub(super) async fn admin_user_create(
          "password must be at least 10 characters".into(),
       ));
    }
-   let hash = hash_password(&body.password)?;
-   let c = state.pool.get().await?;
+   let hash = shared::hash_password(&body.password)?;
+   let conn = state.pool.get().await?;
    let id = users::create()
       .bind(
-         &c,
+         &conn,
          &body.email,
          &Some(hash),
          &body.display_name,
@@ -71,11 +68,11 @@ pub(super) async fn admin_user_create(
       )
       .one()
       .await
-      .map_err(|e| {
-         if is_unique_violation(&e) {
+      .map_err(|err| {
+         if shared::is_unique_violation(&err) {
             ApiError::Conflict(format!("user {} already exists", body.email))
          } else {
-            ApiError::Db(e)
+            ApiError::Db(err)
          }
       })?;
    Ok((StatusCode::CREATED, Json(serde_json::json!({"id": id}))))
@@ -127,8 +124,8 @@ async fn set_admin_user_enabled(
    enabled: bool,
 ) -> ApiResult<StatusCode> {
    if enabled {
-      let c = state.pool.get().await?;
-      let updated = users::enable().bind(&c, &target_id).await?;
+      let conn = state.pool.get().await?;
+      let updated = users::enable().bind(&conn, &target_id).await?;
       return if updated == 0 {
          Err(ApiError::NotFound)
       } else {
@@ -137,8 +134,8 @@ async fn set_admin_user_enabled(
    }
 
    reject_self_disable(actor_id, target_id)?;
-   let mut c = state.pool.get().await?;
-   let txn = c.transaction().await?;
+   let mut conn = state.pool.get().await?;
+   let txn = conn.transaction().await?;
    let updated = users::disable().bind(&txn, &target_id).await?;
    if updated == 0 {
       return Err(ApiError::NotFound);
@@ -165,8 +162,8 @@ pub(super) async fn admin_domain_set_shared(
    Path(id): Path<i64>,
    Json(body): Json<AdminDomainShared>,
 ) -> ApiResult<StatusCode> {
-   let mut c = state.pool.get().await?;
-   let txn = c.transaction().await?;
+   let mut conn = state.pool.get().await?;
+   let txn = conn.transaction().await?;
    // Lock the alias_domain row FIRST, then COUNT — without this, a
    // concurrent alias INSERT can validate against shared=TRUE
    // (the alias_validate trigger now takes the same row lock) while
@@ -189,14 +186,14 @@ pub(super) async fn admin_domain_set_shared(
    // to the alias owner. Refuse the flip and make the admin clean up
    // first.
    if !body.shared {
-      let row = txn
+      let count_row = txn
          .query_one(
             "SELECT COUNT(*)::bigint FROM alias a, alias_domain d WHERE a.domain_id = d.id AND \
              d.id = $1 AND (d.owner_id IS NULL OR a.user_id <> d.owner_id)",
             &[&id],
          )
          .await?;
-      let non_owner: i64 = row.get(0);
+      let non_owner: i64 = count_row.get(0);
       if non_owner > 0 {
          return Err(ApiError::BadRequest(format!(
             "cannot unshare: {non_owner} alias(es) belong to non-owner users; delete or reassign \
@@ -213,6 +210,10 @@ pub(super) async fn admin_domain_set_shared(
 }
 
 #[cfg(test)]
+#[expect(
+   clippy::inline_modules,
+   reason = "small cohesive submodule kept inline"
+)]
 mod tests {
    use super::*;
 
@@ -226,6 +227,6 @@ mod tests {
 
    #[test]
    fn another_user_can_be_disabled() {
-      assert!(reject_self_disable(Some(7), 8).is_ok());
+      reject_self_disable(Some(7), 8).unwrap();
    }
 }

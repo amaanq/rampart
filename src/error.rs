@@ -28,37 +28,41 @@ pub enum ApiError {
 }
 
 impl IntoResponse for ApiError {
+   #[expect(
+      clippy::cognitive_complexity,
+      reason = "flat per-variant match with logging; splitting would obscure the mapping"
+   )]
    fn into_response(self) -> Response {
-      let (status, msg) = match &self {
-         Self::NotFound => (StatusCode::NOT_FOUND, "not found".to_string()),
-         Self::BadRequest(m) => (StatusCode::BAD_REQUEST, m.clone()),
-         Self::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
-         Self::Db(e) => {
-            tracing::error!(error = ?e, "db error");
+      let (status, msg) = match self {
+         Self::NotFound => (StatusCode::NOT_FOUND, "not found".to_owned()),
+         Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+         Self::Conflict(msg) => (StatusCode::CONFLICT, msg),
+         Self::Db(err) => {
+            tracing::error!(error = ?err, "db error");
             (
                StatusCode::INTERNAL_SERVER_ERROR,
-               "database error".to_string(),
+               "database error".to_owned(),
             )
          },
-         Self::Pool(e) => {
-            tracing::error!(error = ?e, "pool error");
+         Self::Pool(err) => {
+            tracing::error!(error = ?err, "pool error");
             (
                StatusCode::INTERNAL_SERVER_ERROR,
-               "database pool error".to_string(),
+               "database pool error".to_owned(),
             )
          },
-         Self::Template(e) => {
-            tracing::error!(error = ?e, "template render error");
+         Self::Template(err) => {
+            tracing::error!(error = ?err, "template render error");
             (
                StatusCode::INTERNAL_SERVER_ERROR,
-               "template error".to_string(),
+               "template error".to_owned(),
             )
          },
-         Self::Internal(e) => {
-            tracing::error!(error = ?e, "internal error");
+         Self::Internal(err) => {
+            tracing::error!(error = ?err, "internal error");
             (
                StatusCode::INTERNAL_SERVER_ERROR,
-               "internal error".to_string(),
+               "internal error".to_owned(),
             )
          },
       };
@@ -66,4 +70,4 @@ impl IntoResponse for ApiError {
    }
 }
 
-pub type ApiResult<T> = std::result::Result<T, ApiError>;
+pub type ApiResult<T> = Result<T, ApiError>;

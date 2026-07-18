@@ -1,31 +1,34 @@
-//! LMTP state-machine tests. DB-free via a MockHandler that returns
+//! LMTP state-machine tests. DB-free via a `MockHandler` that returns
 //! preset verdicts. Drives `handle_session_io` through an in-memory
 //! `tokio::io::duplex` pair.
 //!
 //! `tokio::io::duplex` returns `(client, server)`. The test speaks LMTP
 //! on `client`; `handle_session_io` reads/writes on `server`.
+#![expect(clippy::tests_outside_test_module, reason = "integration test file")]
 
 use std::{
    collections::VecDeque,
    sync::{
       Arc,
       Mutex,
+      MutexGuard,
    },
+   time::Duration,
 };
 
 use async_trait::async_trait;
 use rampart::{
    config::Config,
+   db,
    mailer::MemoryMailer,
    worker::{
       DeliveryHandler,
       WorkerState,
       lmtp::{
+         self,
          INTERNAL_DOMAIN,
          MAX_LINE_LEN,
          MAX_MESSAGE_SIZE,
-         handle_session_io,
-         serve_with_listener,
       },
       pipeline::{
          Delivery,
@@ -34,19 +37,30 @@ use rampart::{
       resubmit::MemorySubmit,
    },
 };
-use tokio::io::{
-   AsyncReadExt,
-   AsyncWriteExt,
-   BufReader,
+use tokio::{
+   io::{
+      self,
+      AsyncRead,
+      AsyncReadExt as _,
+      AsyncWriteExt as _,
+      BufReader,
+      DuplexStream,
+   },
+   net::{
+      TcpListener,
+      TcpStream,
+   },
+   sync::oneshot,
+   task::JoinHandle,
+   time,
 };
 
-/// Returns a fully-constructed WorkerState whose pool is never resolved
-/// (we never call `.get()`). The DeliveryHandler is the only place
-/// pipeline-style queries would happen, and the MockHandler avoids them.
+/// Returns a fully-constructed `WorkerState` whose pool is never resolved
+/// (we never call `.get()`). The `DeliveryHandler` is the only place
+/// pipeline-style queries would happen, and the `MockHandler` avoids them.
 fn make_state() -> WorkerState {
-   let pool =
-      rampart::db::build_pool("host=/tmp/rampart-no-such-socket-shouldnt-connect dbname=fake")
-         .expect("pool build (no connection attempt)");
+   let pool = db::build_pool("host=/tmp/rampart-no-such-socket-shouldnt-connect dbname=fake")
+      .expect("pool build (no connection attempt)");
    let cfg = Config {
       database_url:                 "host=/tmp/rampart-no-such-socket dbname=fake".into(),
       listen:                       "127.0.0.1:0".parse().unwrap(),
@@ -89,18 +103,18 @@ impl MockHandler {
          calls:  Mutex::new(Vec::new()),
       }
    }
-   fn calls(&self) -> std::sync::MutexGuard<'_, Vec<Delivery>> {
+   fn calls(&self) -> MutexGuard<'_, Vec<Delivery>> {
       self.calls.lock().unwrap()
    }
 }
 
 #[async_trait]
 impl DeliveryHandler for MockHandler {
-   async fn handle(&self, _state: &WorkerState, d: Delivery) -> Verdict {
+   async fn handle(&self, _state: &WorkerState, delivery: Delivery) -> Verdict {
       self.calls.lock().unwrap().push(Delivery {
-         rcpt:      d.rcpt,
-         mail_from: d.mail_from.clone(),
-         raw:       d.raw.clone(),
+         rcpt:      delivery.rcpt,
+         mail_from: delivery.mail_from.clone(),
+         raw:       delivery.raw,
       });
       self
          .preset
@@ -117,25 +131,25 @@ impl DeliveryHandler for MockHandler {
 fn spawn_session(
    state: WorkerState,
    handler: Arc<MockHandler>,
-) -> (
-   tokio::io::DuplexStream,
-   tokio::task::JoinHandle<anyhow::Result<()>>,
-) {
-   let (client, server) = tokio::io::duplex(64 * 1024);
-   let (server_r, server_w) = tokio::io::split(server);
+) -> (DuplexStream, JoinHandle<anyhow::Result<()>>) {
+   let (client, server) = io::duplex(64 * 1024);
+   let (server_r, server_w) = io::split(server);
    let join = tokio::spawn(async move {
-      handle_session_io(state, BufReader::new(server_r), server_w, handler.as_ref()).await
+      lmtp::handle_session_io(state, BufReader::new(server_r), server_w, handler.as_ref()).await
    });
    (client, join)
 }
 
 /// Read until we've collected at least `lines` newline-terminated chunks
 /// or the stream closes. Returns the accumulated text.
-async fn read_n_lines<R: tokio::io::AsyncRead + Unpin>(r: &mut R, lines: usize) -> String {
+async fn read_n_lines<R>(reader: &mut R, lines: usize) -> String
+where
+   R: AsyncRead + Unpin,
+{
    let mut buf = String::new();
-   let mut tmp = [0u8; 4096];
+   let mut tmp = [0_u8; 4096];
    while buf.matches('\n').count() < lines {
-      let n = r.read(&mut tmp).await.unwrap_or(0);
+      let n = reader.read(&mut tmp).await.unwrap_or(0);
       if n == 0 {
          break;
       }
@@ -148,7 +162,7 @@ async fn read_n_lines<R: tokio::io::AsyncRead + Unpin>(r: &mut R, lines: usize) 
 async fn session_accepts_known_rcpt() {
    let state = make_state();
    let mock = Arc::new(MockHandler::with_verdicts([Verdict::Delivered]));
-   let (mut client, join) = spawn_session(state, mock.clone());
+   let (mut client, join) = spawn_session(state, Arc::clone(&mock));
 
    // greeting (220)
    let _ = read_n_lines(&mut client, 1).await;
@@ -163,31 +177,30 @@ async fn session_accepts_known_rcpt() {
       .write_all(format!("RCPT TO:<rampart-42@{INTERNAL_DOMAIN}>\r\n").as_bytes())
       .await
       .unwrap();
-   let resp = read_n_lines(&mut client, 1).await;
+   let mut resp = read_n_lines(&mut client, 1).await;
    assert!(resp.starts_with("250"), "rcpt accept: {resp}");
    client.write_all(b"DATA\r\n").await.unwrap();
-   let resp = read_n_lines(&mut client, 1).await;
+   resp = read_n_lines(&mut client, 1).await;
    assert!(resp.starts_with("354"), "data: {resp}");
    client
       .write_all(b"From: <ext@sender.test>\r\nSubject: hi\r\n\r\nbody\r\n.\r\n")
       .await
       .unwrap();
-   let resp = read_n_lines(&mut client, 1).await;
+   resp = read_n_lines(&mut client, 1).await;
    assert!(resp.starts_with("250"), "post-DATA per-rcpt: {resp}");
    client.write_all(b"QUIT\r\n").await.unwrap();
    drop(client);
    let _ = join.await;
 
-   let calls = mock.calls();
-   assert_eq!(calls.len(), 1);
-   assert_eq!(calls[0].mail_from, "ext@sender.test");
+   assert_eq!(mock.calls().len(), 1);
+   assert_eq!(mock.calls()[0].mail_from, "ext@sender.test");
 }
 
 #[tokio::test]
 async fn session_rejects_unknown_rcpt() {
    let state = make_state();
    let mock = Arc::new(MockHandler::with_verdicts([]));
-   let (mut client, join) = spawn_session(state, mock.clone());
+   let (mut client, join) = spawn_session(state, Arc::clone(&mock));
 
    let _ = read_n_lines(&mut client, 1).await;
    client.write_all(b"LHLO test.example\r\n").await.unwrap();
@@ -214,7 +227,7 @@ async fn session_rejects_unknown_rcpt() {
 async fn rset_between_transactions() {
    let state = make_state();
    let mock = Arc::new(MockHandler::with_verdicts([Verdict::Delivered]));
-   let (mut client, join) = spawn_session(state, mock.clone());
+   let (mut client, join) = spawn_session(state, Arc::clone(&mock));
 
    let _ = read_n_lines(&mut client, 1).await;
    client.write_all(b"LHLO t\r\n").await.unwrap();
@@ -222,12 +235,12 @@ async fn rset_between_transactions() {
    client.write_all(b"MAIL FROM:<a@a>\r\n").await.unwrap();
    let _ = read_n_lines(&mut client, 1).await;
    client.write_all(b"RSET\r\n").await.unwrap();
-   let resp = read_n_lines(&mut client, 1).await;
+   let mut resp = read_n_lines(&mut client, 1).await;
    assert!(resp.starts_with("250"), "rset: {resp}");
 
    // Trying DATA after RSET without MAIL/RCPT must fail.
    client.write_all(b"DATA\r\n").await.unwrap();
-   let resp = read_n_lines(&mut client, 1).await;
+   resp = read_n_lines(&mut client, 1).await;
    assert!(resp.starts_with("503"), "data after rset must 503: {resp}");
 
    // New transaction works.
@@ -244,7 +257,7 @@ async fn rset_between_transactions() {
       .write_all(b"From: x\r\n\r\nb\r\n.\r\n")
       .await
       .unwrap();
-   let resp = read_n_lines(&mut client, 1).await;
+   resp = read_n_lines(&mut client, 1).await;
    assert!(resp.starts_with("250"), "second txn: {resp}");
    client.write_all(b"QUIT\r\n").await.unwrap();
    drop(client);
@@ -262,7 +275,7 @@ async fn max_message_size_returns_552() {
    // Force a body that exceeds MAX_MESSAGE_SIZE.
    let state = make_state();
    let mock = Arc::new(MockHandler::with_verdicts([]));
-   let (mut client, join) = spawn_session(state, mock.clone());
+   let (mut client, join) = spawn_session(state, Arc::clone(&mock));
 
    let _ = read_n_lines(&mut client, 1).await;
    client.write_all(b"LHLO t\r\n").await.unwrap();
@@ -305,7 +318,7 @@ async fn max_message_size_returns_552() {
 async fn line_too_long_closes_session() {
    let state = make_state();
    let mock = Arc::new(MockHandler::with_verdicts([]));
-   let (mut client, join) = spawn_session(state, mock.clone());
+   let (mut client, join) = spawn_session(state, Arc::clone(&mock));
 
    let _ = read_n_lines(&mut client, 1).await;
    let oversized = vec![b'x'; MAX_LINE_LEN + 16];
@@ -330,7 +343,7 @@ async fn multi_rcpt_per_transaction() {
       },
       Verdict::Delivered,
    ]));
-   let (mut client, join) = spawn_session(state, mock.clone());
+   let (mut client, join) = spawn_session(state, Arc::clone(&mock));
 
    let _ = read_n_lines(&mut client, 1).await;
    client.write_all(b"LHLO t\r\n").await.unwrap();
@@ -374,29 +387,29 @@ async fn multi_rcpt_per_transaction() {
 // ---------------------------------------------------------------------------
 
 /// Graceful path: accept a session, signal shutdown, the in-flight session
-/// completes cleanly via QUIT, serve_with_listener returns Ok, no aborts.
+/// completes cleanly via QUIT, `serve_with_listener` returns Ok, no aborts.
 #[tokio::test]
 async fn drain_lets_in_flight_session_finish() {
    let state = make_state();
    let mock: Arc<dyn DeliveryHandler> = Arc::new(MockHandler::with_verdicts([Verdict::Delivered]));
-   let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+   let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
    let addr = listener.local_addr().unwrap();
-   let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+   let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
    let serve_join = tokio::spawn(async move {
-      serve_with_listener(
+      lmtp::serve_with_listener(
          state,
          listener,
          mock,
          async {
             let _ = shutdown_rx.await;
          },
-         std::time::Duration::from_secs(5),
+         Duration::from_secs(5),
       )
       .await
    });
 
    // Open a session, complete it, signal shutdown.
-   let mut sock = tokio::net::TcpStream::connect(addr).await.unwrap();
+   let mut sock = TcpStream::connect(addr).await.unwrap();
    let _ = read_n_lines(&mut sock, 1).await;
    sock.write_all(b"LHLO t\r\n").await.unwrap();
    let _ = read_n_lines(&mut sock, 3).await;
@@ -418,12 +431,11 @@ async fn drain_lets_in_flight_session_finish() {
    let _ = shutdown_tx.send(());
 
    // serve should return Ok within the drain window (5s).
-   let serve_result = tokio::time::timeout(std::time::Duration::from_secs(5), serve_join)
+   time::timeout(Duration::from_secs(5), serve_join)
       .await
       .expect("serve must return within drain window")
       .expect("join")
       .expect("serve_with_listener returned err");
-   let _ = serve_result;
 }
 
 /// Drain timeout path: a session is still parked when shutdown fires
@@ -433,11 +445,11 @@ async fn drain_lets_in_flight_session_finish() {
 async fn drain_aborts_after_timeout() {
    let state = make_state();
    let mock: Arc<dyn DeliveryHandler> = Arc::new(MockHandler::with_verdicts([]));
-   let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+   let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
    let addr = listener.local_addr().unwrap();
-   let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+   let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
    let serve_join = tokio::spawn(async move {
-      serve_with_listener(
+      lmtp::serve_with_listener(
          state,
          listener,
          mock,
@@ -446,24 +458,23 @@ async fn drain_aborts_after_timeout() {
          },
          // Short drain — the session below is parked waiting for our
          // input that we never send.
-         std::time::Duration::from_millis(200),
+         Duration::from_millis(200),
       )
       .await
    });
 
    // Connect but don't drive the session anywhere; it sits idle inside
    // the read loop. Shutdown is signalled while it's parked.
-   let mut sock = tokio::net::TcpStream::connect(addr).await.unwrap();
+   let mut sock = TcpStream::connect(addr).await.unwrap();
    let _ = read_n_lines(&mut sock, 1).await;
    let _ = shutdown_tx.send(());
 
    // serve_with_listener should return Ok within (drain + slack). The
    // parked session gets abort_all'd; that's the "aborts" branch.
-   let serve_result = tokio::time::timeout(std::time::Duration::from_secs(2), serve_join)
+   time::timeout(Duration::from_secs(2), serve_join)
       .await
       .expect("serve must return within drain + slack")
       .expect("join")
       .expect("serve_with_listener returned err");
-   let _ = serve_result;
    drop(sock);
 }

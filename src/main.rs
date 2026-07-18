@@ -1,5 +1,10 @@
+use std::{
+   env,
+   path::PathBuf,
+};
+
 use anyhow::{
-   Context,
+   Context as _,
    Result,
 };
 use clap::{
@@ -15,6 +20,7 @@ use rampart::{
    serve,
    worker,
 };
+use tokio::runtime::Builder;
 
 #[derive(Parser)]
 #[command(name = "rampart", version, about = "Forward-only email alias manager.")]
@@ -40,7 +46,7 @@ enum Cmd {
    /// Operator commands.
    Admin {
       #[command(subcommand)]
-      cmd: AdminCmd,
+      cmd: Box<AdminCmd>,
    },
 }
 
@@ -49,7 +55,7 @@ enum AdminCmd {
    /// Render the session.rcpt Sieve from current DB state.
    RenderSieve {
       #[arg(long)]
-      output: Option<std::path::PathBuf>,
+      output: Option<PathBuf>,
    },
 
    /// Create a user account.
@@ -81,10 +87,10 @@ enum AdminCmd {
 
    /// Add a verified mailbox for a user.
    AddMailbox {
-      /// Owner user's email
+      /// Owner user's email.
       #[arg(long = "user")]
       user_email:   String,
-      /// Mailbox address
+      /// Mailbox address.
       email:        String,
       #[arg(long)]
       display_name: Option<String>,
@@ -111,15 +117,15 @@ enum AdminCmd {
    },
 
    /// Import aliases from CSV produced by export-aliases.
-   ImportAliases { file: std::path::PathBuf },
+   ImportAliases { file: PathBuf },
 
    /// Idempotently seed the database with demo data for UI development.
    DevSeed,
 
    /// Prune expired/used tokens, stale rate-limit buckets, expired sessions,
-   /// expired webauthn ceremonies, old email_log rows. Idempotent.
+   /// expired webauthn ceremonies, old `email_log` rows. Idempotent.
    Gc {
-      /// Delete email_log rows older than this many days.
+      /// Delete `email_log` rows older than this many days.
       #[arg(long, default_value_t = rampart::admin::DEFAULT_EMAIL_LOG_DAYS)]
       email_log_days: i32,
       /// Print would-delete counts without changing state.
@@ -129,17 +135,17 @@ enum AdminCmd {
 
    /// Idempotently seed stalwart's JMAP registry for reply-via-alias.
    BootstrapStalwart {
-      /// e.g. http://127.0.0.1:8080 or https://stalwart.example.com
+      /// e.g. <http://127.0.0.1:8080> or <https://stalwart.example.com>.
       #[arg(long)]
       jmap_base_url:                  String,
       #[arg(long, default_value = "admin")]
       admin_username:                 String,
       #[arg(long)]
-      admin_password_file:            std::path::PathBuf,
+      admin_password_file:            PathBuf,
       /// Same password rampart uses for SMTP AUTH.
       #[arg(long)]
-      rampart_notifier_password_file: std::path::PathBuf,
-      /// e.g. rampart-notifier@rampart.email
+      rampart_notifier_password_file: PathBuf,
+      /// e.g. rampart-notifier@rampart.email.
       #[arg(long)]
       rampart_notifier_address:       String,
       #[arg(long, default_value = "127.0.0.1")]
@@ -147,17 +153,17 @@ enum AdminCmd {
       #[arg(long, default_value_t = 8024)]
       lmtp_port:                      u16,
       /// Repeatable. Each becomes a stalwart `Domain` with auto-DKIM and
-      /// a sieve rcpt-domain match → 'rampart_rcpt'.
+      /// a sieve rcpt-domain match → '`rampart_rcpt`'.
       #[arg(long = "alias-domain", value_name = "DOMAIN", num_args = 0..)]
       alias_domains:                  Vec<String>,
-      /// libpq connection string. Drives stalwart's StoreLookup
+      /// libpq connection string. Drives stalwart's `StoreLookup`
       /// (namespace `sql`) so `query('sql', ...)` in the sieve resolves.
       #[arg(long)]
       database_url:                   String,
       /// Rendered Sieve path — pushed into `SieveSystemScript rampart_rcpt`
       /// so stalwart doesn't depend on `%{file:...}%`.
       #[arg(long)]
-      sieve_path:                     std::path::PathBuf,
+      sieve_path:                     PathBuf,
       #[arg(long)]
       dry_run:                        bool,
    },
@@ -166,7 +172,7 @@ enum AdminCmd {
 fn main() -> Result<()> {
    init_tracing();
    let cli = Cli::parse();
-   let rt = tokio::runtime::Builder::new_multi_thread()
+   let rt = Builder::new_multi_thread()
       .enable_all()
       .build()
       .context("build tokio runtime")?;
@@ -181,11 +187,11 @@ async fn run(cli: Cli) -> Result<()> {
       },
       Cmd::Preview => {
          use std::net::SocketAddr;
-         let listen: SocketAddr = std::env::var("RAMPART_LISTEN")
+         let listen: SocketAddr = env::var("RAMPART_LISTEN")
             .unwrap_or_else(|_| "127.0.0.1:8090".into())
             .parse()
             .context("parsing RAMPART_LISTEN")?;
-         let static_dir = std::env::var("RAMPART_STATIC_DIR").unwrap_or_else(|_| "static".into());
+         let static_dir = env::var("RAMPART_STATIC_DIR").unwrap_or_else(|_| "static".into());
          preview::serve(listen, static_dir).await
       },
       Cmd::Worker => {
@@ -196,7 +202,7 @@ async fn run(cli: Cli) -> Result<()> {
          let url = database_url()?;
          migrate::run(&url).await
       },
-      Cmd::Admin { cmd } => match cmd {
+      Cmd::Admin { cmd } => match *cmd {
          // Bootstrap takes DB params from CLI args, not env.
          AdminCmd::BootstrapStalwart {
             jmap_base_url,
@@ -266,17 +272,17 @@ async fn run(cli: Cli) -> Result<()> {
 }
 
 fn database_url() -> Result<String> {
-   std::env::var("RAMPART_DATABASE_URL")
-      .or_else(|_| std::env::var("DATABASE_URL"))
+   env::var("RAMPART_DATABASE_URL")
+      .or_else(|_| env::var("DATABASE_URL"))
       .context("RAMPART_DATABASE_URL or DATABASE_URL must be set")
 }
 
 fn init_tracing() {
-   use tracing_subscriber::{
-      EnvFilter,
-      fmt,
-   };
+   use tracing_subscriber::EnvFilter;
    let filter =
       EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,rampart=debug"));
-   fmt().with_env_filter(filter).with_target(false).init();
+   tracing_subscriber::fmt()
+      .with_env_filter(filter)
+      .with_target(false)
+      .init();
 }

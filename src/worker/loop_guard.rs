@@ -1,42 +1,43 @@
-//! Validate incoming LMTP recipients. Accept only
+//! Validate incoming LMTP recipients.
+//!
+//! Accept only
 //!   rampart-<digits>@internal.rampart.lmtp                  (inbound forward)
 //!   rampart-reply-<digits>@internal.rampart.lmtp            (inbound reply)
 //!   rampart-bnc-<payload>@internal.rampart.lmtp             (signed DSN bounce
 //! VERP) Anything else → 550. Prevents loops and mistaken direct delivery.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum BouncePhase {
    Forward,
    Reply,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum Rcpt {
    Forward(i64),
    Reply(i64),
    /// DSN delivered to a `bnc+{payload}@<alias_domain>` VERP we used
    /// as MAIL FROM. `payload` is the raw (untrusted) string
    /// `{phase}+{id}+{tag}`; the worker HMAC-verifies it against
-   /// `verp_key` before mutating any email_log row.
+   /// `verp_key` before mutating any `email_log` row.
    Bounce {
       payload: String,
    },
+}
+
+// BIGSERIAL ids are strictly positive and fit i64. Reject leading
+// sign, zero, or values that would wrap on i64 cast.
+fn parse_bigserial(digits: &str) -> Option<i64> {
+   let value = i64::try_from(digits.parse::<u64>().ok()?).ok()?;
+   (value > 0).then_some(value)
 }
 
 pub fn parse_rcpt(addr: &str, expected_domain: &str) -> Option<Rcpt> {
    let (local, domain) = addr.split_once('@')?;
    if !domain.eq_ignore_ascii_case(expected_domain) {
       return None;
-   }
-   // BIGSERIAL ids are strictly positive and fit i64. Reject leading
-   // sign, zero, or values that would wrap on i64 cast.
-   fn parse_bigserial(s: &str) -> Option<i64> {
-      let v = s.parse::<u64>().ok()?;
-      if v > 0 && v <= i64::MAX as u64 {
-         Some(v as i64)
-      } else {
-         None
-      }
    }
    if let Some(rest) = local.strip_prefix("rampart-bnc-") {
       if rest.is_empty() {
@@ -55,6 +56,7 @@ pub fn parse_rcpt(addr: &str, expected_domain: &str) -> Option<Rcpt> {
 }
 
 #[cfg(test)]
+#[expect(clippy::inline_modules, reason = "unit tests kept beside impl")]
 mod tests {
    use super::*;
 

@@ -1,8 +1,11 @@
 //! MTA singleton patches and bare-object upserts. Domain-marker logic
 //! lives in `domains.rs`.
+#![expect(clippy::print_stdout, reason = "CLI command output")]
+
+use std::iter;
 
 use anyhow::{
-   Context,
+   Context as _,
    Result,
 };
 use serde_json::{
@@ -19,10 +22,8 @@ use super::{
    Stats,
    VQ_NAME,
    jmap::{
+      self,
       JmapClient,
-      build_expression,
-      read_else,
-      read_match_branches,
    },
 };
 
@@ -34,8 +35,11 @@ pub(super) async fn patch_stage_rcpt(
    // Writing just `{ "else": ... }` clobbers operator-defined match
    // branches; read-modify-write to preserve them.
    let cur = client.get_by_id("MtaStageRcpt", SINGLETON_ID).await?;
-   let cur_match = read_match_branches(cur.as_ref().and_then(|o| o.get("allowRelaying")));
-   let cur_else = read_else(cur.as_ref().and_then(|o| o.get("allowRelaying")), "false");
+   let cur_match = jmap::read_match_branches(cur.as_ref().and_then(|obj| obj.get("allowRelaying")));
+   let cur_else = jmap::read_else(
+      cur.as_ref().and_then(|obj| obj.get("allowRelaying")),
+      "false",
+   );
 
    let new_match = rebuild_with_canonical_guard(cur_match.clone(), "true");
 
@@ -47,7 +51,7 @@ pub(super) async fn patch_stage_rcpt(
    }
 
    let patch = json!({
-       "allowRelaying": build_expression(new_match, &cur_else),
+       "allowRelaying": jmap::build_expression(new_match, &cur_else),
    });
    if dry_run {
       println!("DRY RUN: MtaStageRcpt/set update singleton: {patch:#}");
@@ -91,18 +95,21 @@ pub(super) async fn upsert_route(
    if let Some(id) = client.query_by_name("MtaRoute", ROUTE_NAME).await?
       && let Some(cur) = client.get_by_id("MtaRoute", &id).await?
    {
-      let cur_type = cur.get("@type").and_then(|v| v.as_str()).unwrap_or("");
+      let cur_type = cur
+         .get("@type")
+         .and_then(|value| value.as_str())
+         .unwrap_or("");
       if cur_type != "Relay" {
          anyhow::bail!(
             "MtaRoute '{ROUTE_NAME}' (id {id}) has @type='{cur_type}', expected 'Relay'. Delete \
              the route in stalwart and re-run bootstrap to recreate as Relay."
          );
       }
-      let same = cur.get("address").and_then(|v| v.as_str()) == Some(address)
-         && cur.get("port").and_then(|v| v.as_u64()) == Some(port as u64)
-         && cur.get("protocol").and_then(|v| v.as_str()) == Some("lmtp")
-         && cur.get("implicitTls").and_then(|v| v.as_bool()) == Some(false)
-         && cur.get("allowInvalidCerts").and_then(|v| v.as_bool()) == Some(true);
+      let same = cur.get("address").and_then(|value| value.as_str()) == Some(address)
+         && cur.get("port").and_then(Value::as_u64) == Some(u64::from(port))
+         && cur.get("protocol").and_then(|value| value.as_str()) == Some("lmtp")
+         && cur.get("implicitTls").and_then(Value::as_bool) == Some(false)
+         && cur.get("allowInvalidCerts").and_then(Value::as_bool) == Some(true);
       if same {
          stats.skipped += 1;
          return Ok(());
@@ -143,7 +150,7 @@ pub(super) async fn upsert_virtual_queue(
 
    if let Some(id) = client.query_by_name("MtaVirtualQueue", VQ_NAME).await? {
       if let Some(cur) = client.get_by_id("MtaVirtualQueue", &id).await? {
-         let same = cur.get("threadsPerNode").and_then(|v| v.as_u64()) == Some(THREADS);
+         let same = cur.get("threadsPerNode").and_then(Value::as_u64) == Some(THREADS);
          if same {
             stats.skipped += 1;
             return Ok(id);
@@ -203,7 +210,7 @@ pub(super) async fn upsert_delivery_schedule(
       .await?
       && let Some(cur) = client.get_by_id("MtaDeliverySchedule", &id).await?
    {
-      let same = cur.get("queueId").and_then(|v| v.as_str()) == Some(queue_id)
+      let same = cur.get("queueId").and_then(|value| value.as_str()) == Some(queue_id)
          && cur.get("retry") == Some(&retry)
          && cur.get("notify") == Some(&notify)
          && cur.get("expiry") == Some(&expiry);
@@ -252,8 +259,8 @@ pub(super) async fn upsert_connection_strategy(
    ];
    let mut create = serde_json::Map::new();
    create.insert("name".into(), json!(CONN_NAME));
-   for (k, v) in TIMEOUTS {
-      create.insert(k.into(), json!(v));
+   for (key, val) in TIMEOUTS {
+      create.insert(key.into(), json!(val));
    }
    let create = Value::Object(create);
 
@@ -264,14 +271,14 @@ pub(super) async fn upsert_connection_strategy(
    {
       let same = TIMEOUTS
          .iter()
-         .all(|(k, v)| cur.get(*k).and_then(|x| x.as_u64()) == Some(*v));
+         .all(|&(key, val)| cur.get(key).and_then(Value::as_u64) == Some(val));
       if same {
          stats.skipped += 1;
          return Ok(());
       }
       let mut patch = serde_json::Map::new();
-      for (k, v) in TIMEOUTS {
-         patch.insert(k.into(), json!(v));
+      for (key, val) in TIMEOUTS {
+         patch.insert(key.into(), json!(val));
       }
       let patch = Value::Object(patch);
       if dry_run {
@@ -306,7 +313,7 @@ pub(super) fn rebuild_with_canonical_guard(
    out.extend(
       existing
          .into_iter()
-         .filter(|(if_, _)| !if_.contains(RELAY_GUARD)),
+         .filter(|pair| !pair.0.contains(RELAY_GUARD)),
    );
    out
 }
@@ -321,12 +328,17 @@ pub(super) async fn patch_outbound_strategy(
       .await?;
 
    // Preserve stalwart's default is_local_domain route and dsn/report schedule.
-   let route_match = read_match_branches(cur.as_ref().and_then(|o| o.get("route")));
-   let route_else = read_else(cur.as_ref().and_then(|o| o.get("route")), "'mx'");
-   let schedule_match = read_match_branches(cur.as_ref().and_then(|o| o.get("schedule")));
-   let schedule_else = read_else(cur.as_ref().and_then(|o| o.get("schedule")), "'remote'");
-   let connection_match = read_match_branches(cur.as_ref().and_then(|o| o.get("connection")));
-   let connection_else = read_else(cur.as_ref().and_then(|o| o.get("connection")), "'default'");
+   let route_match = jmap::read_match_branches(cur.as_ref().and_then(|obj| obj.get("route")));
+   let route_else = jmap::read_else(cur.as_ref().and_then(|obj| obj.get("route")), "'mx'");
+   let schedule_match = jmap::read_match_branches(cur.as_ref().and_then(|obj| obj.get("schedule")));
+   let schedule_else =
+      jmap::read_else(cur.as_ref().and_then(|obj| obj.get("schedule")), "'remote'");
+   let connection_match =
+      jmap::read_match_branches(cur.as_ref().and_then(|obj| obj.get("connection")));
+   let connection_else = jmap::read_else(
+      cur.as_ref().and_then(|obj| obj.get("connection")),
+      "'default'",
+   );
 
    let want_route_then = format!("'{ROUTE_NAME}'");
    let want_sched_then = format!("'{SCHEDULE_NAME}'");
@@ -345,9 +357,9 @@ pub(super) async fn patch_outbound_strategy(
    }
 
    let patch = json!({
-       "route":      build_expression(new_route, &route_else),
-       "schedule":   build_expression(new_schedule, &schedule_else),
-       "connection": build_expression(new_connection, &connection_else),
+       "route":      jmap::build_expression(new_route, &route_else),
+       "schedule":   jmap::build_expression(new_schedule, &schedule_else),
+       "connection": jmap::build_expression(new_connection, &connection_else),
    });
 
    if dry_run {
@@ -395,7 +407,7 @@ pub(super) async fn upsert_notifier(
    let candidates = client.query_ids_by_name("Account", &local).await?;
    for candidate_id in &candidates {
       if let Some(obj) = client.get_by_id("Account", candidate_id).await?
-         && obj.get("domainId").and_then(|v| v.as_str()) == Some(domain_id.as_str())
+         && obj.get("domainId").and_then(|value| value.as_str()) == Some(domain_id.as_str())
       {
          // Re-push so rotated agenix secrets reach stalwart. Wholesale
          // replacement is intended — rampart-notifier has no AppPassword/ApiKey.
@@ -457,7 +469,7 @@ pub(super) async fn ensure_domain_id(
    Ok(id)
 }
 
-/// libpq connection string → PostgreSQL LookupStore params. Stalwart
+/// libpq connection string → `PostgreSQL` `LookupStore` params. Stalwart
 /// connects as the `stalwart-mail` role via unix-peer auth (V001 grants
 /// it just enough EXECUTE+SELECT for the sieve `query()` call), so the
 /// URL's user is deliberately dropped.
@@ -470,10 +482,10 @@ fn parse_pg_url(url: &str) -> Result<PgParams> {
    let mut host: Option<String> = None;
    let mut database: Option<String> = None;
    for kv in url.split_whitespace() {
-      if let Some((k, v)) = kv.split_once('=') {
-         match k {
-            "host" => host = Some(v.to_owned()),
-            "dbname" | "database" => database = Some(v.to_owned()),
+      if let Some((key, val)) = kv.split_once('=') {
+         match key {
+            "host" => host = Some(val.to_owned()),
+            "dbname" | "database" => database = Some(val.to_owned()),
             _ => {},
          }
       }
@@ -485,7 +497,7 @@ fn parse_pg_url(url: &str) -> Result<PgParams> {
    })
 }
 
-/// StoreLookup `sql` → rampart's postgres. Stalwart's sieve
+/// `StoreLookup` `sql` → rampart's postgres. Stalwart's sieve
 /// `query('sql', '...', [...])` resolves through this.
 pub(super) async fn upsert_store_lookup(
    client: &JmapClient,
@@ -555,14 +567,20 @@ async fn query_store_lookup_by_namespace(
       .await?;
    let list = resp
       .get(1)
-      .and_then(|v| v.get(1))
-      .and_then(|v| v.get("list"))
-      .and_then(|v| v.as_array())
+      .and_then(|value| value.get(1))
+      .and_then(|value| value.get("list"))
+      .and_then(|value| value.as_array())
       .cloned()
       .unwrap_or_default();
    for item in list {
-      let id = item.get("id").and_then(|v| v.as_str()).unwrap_or("");
-      let ns = item.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
+      let id = item
+         .get("id")
+         .and_then(|value| value.as_str())
+         .unwrap_or("");
+      let ns = item
+         .get("namespace")
+         .and_then(|value| value.as_str())
+         .unwrap_or("");
       if ns == namespace {
          return Ok(Some(id.to_owned()));
       }
@@ -572,7 +590,7 @@ async fn query_store_lookup_by_namespace(
 
 /// Push rendered Sieve into `SieveSystemScript` named `rampart_rcpt`.
 /// Idempotent — creates if absent, replaces contents if drifted.
-pub(crate) async fn upsert_sieve_script(
+pub async fn upsert_sieve_script(
    client: &JmapClient,
    stats: &mut Stats,
    contents: &str,
@@ -591,12 +609,12 @@ pub(crate) async fn upsert_sieve_script(
          .await?;
       let stored = resp
          .first()
-         .and_then(|v| v.get(1))
-         .and_then(|v| v.get("list"))
-         .and_then(|v| v.as_array())
-         .and_then(|v| v.first())
-         .and_then(|v| v.get("contents"))
-         .and_then(|v| v.as_str())
+         .and_then(|value| value.get(1))
+         .and_then(|value| value.get("list"))
+         .and_then(|value| value.as_array())
+         .and_then(|value| value.first())
+         .and_then(|value| value.get("contents"))
+         .and_then(|value| value.as_str())
          .unwrap_or("");
       if stored == contents {
          stats.skipped += 1;
@@ -635,7 +653,7 @@ pub(crate) async fn upsert_sieve_script(
 /// One `rcpt_domain == '<alias>' → 'rampart_rcpt'` branch per managed alias
 /// domain. Replaces all existing `'rampart_rcpt'`-then branches; preserves
 /// operator-added branches alongside.
-pub(crate) async fn patch_stage_rcpt_script(
+pub async fn patch_stage_rcpt_script(
    client: &JmapClient,
    stats: &mut Stats,
    alias_domains: &[String],
@@ -648,16 +666,16 @@ pub(crate) async fn patch_stage_rcpt_script(
       .await?;
    let current = resp
       .first()
-      .and_then(|v| v.get(1))
-      .and_then(|v| v.get("list"))
-      .and_then(|v| v.as_array())
-      .and_then(|v| v.first())
+      .and_then(|value| value.get(1))
+      .and_then(|value| value.get("list"))
+      .and_then(|value| value.as_array())
+      .and_then(|value| value.first())
       .cloned()
       .ok_or_else(|| anyhow::anyhow!("MtaStageRcpt singleton not found"))?;
    let existing = current.get("script");
-   let mut branches: Vec<(String, String)> = read_match_branches(existing)
+   let mut branches: Vec<(String, String)> = jmap::read_match_branches(existing)
       .into_iter()
-      .filter(|(_, then)| then != "'rampart_rcpt'")
+      .filter(|pair| pair.1 != "'rampart_rcpt'")
       .collect();
    // Internal LMTP domain must run the Sieve too — `allowRelaying`
    // accepts `rcpt_domain == 'internal.rampart.lmtp'` so the worker can
@@ -671,19 +689,20 @@ pub(crate) async fn patch_stage_rcpt_script(
    // RCPT before queueing. Sieve runs once at session.rcpt; internal
    // relay dispatch via MtaOutboundStrategy doesn't re-invoke it, so
    // legitimate sieve-rewritten queue traffic still flows.
-   let mut canonical: Vec<(String, String)> = std::iter::once((
+   let mut canonical: Vec<(String, String)> = iter::once((
       "rcpt_domain == 'internal.rampart.lmtp'".to_owned(),
       "'rampart_rcpt'".to_owned(),
    ))
-   .chain(
-      alias_domains
-         .iter()
-         .map(|d| (format!("rcpt_domain == '{d}'"), "'rampart_rcpt'".to_owned())),
-   )
+   .chain(alias_domains.iter().map(|domain| {
+      (
+         format!("rcpt_domain == '{domain}'"),
+         "'rampart_rcpt'".to_owned(),
+      )
+   }))
    .collect();
    canonical.append(&mut branches);
-   let else_expr = read_else(existing, "false");
-   let new_expr = build_expression(canonical.clone(), &else_expr);
+   let else_expr = jmap::read_else(existing, "false");
+   let new_expr = jmap::build_expression(canonical.clone(), &else_expr);
    if existing == Some(&new_expr) {
       stats.skipped += 1;
       tracing::info!("MtaStageRcpt.script branches already canonical, skipping");
@@ -715,20 +734,22 @@ pub(super) async fn patch_must_match_sender(
       .await?;
    let current = resp
       .first()
-      .and_then(|v| v.get(1))
-      .and_then(|v| v.get("list"))
-      .and_then(|v| v.as_array())
-      .and_then(|v| v.first())
+      .and_then(|value| value.get(1))
+      .and_then(|value| value.get("list"))
+      .and_then(|value| value.as_array())
+      .and_then(|value| value.first())
       .cloned()
       .ok_or_else(|| anyhow::anyhow!("MtaStageAuth singleton not found"))?;
    let existing = current.get("mustMatchSender");
    // Strip any `authenticated_as == '<addr>' → 'false'` exemption — those
    // are the shape rampart owns. Renaming the notifier address would otherwise
    // leave the old exemption alongside the new one.
-   let mut branches: Vec<(String, String)> = read_match_branches(existing)
+   let mut branches: Vec<(String, String)> = jmap::read_match_branches(existing)
       .into_iter()
-      .filter(|(if_, then)| {
-         !(then == "false" && if_.starts_with("authenticated_as == '") && if_.ends_with('\''))
+      .filter(|pair| {
+         !(pair.1 == "false"
+            && pair.0.starts_with("authenticated_as == '")
+            && pair.0.ends_with('\''))
       })
       .collect();
    let canonical_branch = (
@@ -737,8 +758,8 @@ pub(super) async fn patch_must_match_sender(
    );
    let mut canonical = vec![canonical_branch];
    canonical.append(&mut branches);
-   let else_expr = read_else(existing, "true");
-   let new_expr = build_expression(canonical.clone(), &else_expr);
+   let else_expr = jmap::read_else(existing, "true");
+   let new_expr = jmap::build_expression(canonical.clone(), &else_expr);
    if existing == Some(&new_expr) {
       stats.skipped += 1;
       tracing::info!("MtaStageAuth.mustMatchSender already canonical, skipping");
