@@ -522,20 +522,34 @@ fn extract_session_id_from_headers(headers: &HeaderMap) -> Option<Vec<u8>> {
 }
 
 async fn signup_page(Path(token): Path<String>) -> Response {
+    render_signup_page(StatusCode::OK, &token, None, "", "")
+}
+
+fn render_signup_page(
+    status: StatusCode,
+    token: &str,
+    error: Option<&str>,
+    email: &str,
+    display_name: &str,
+) -> Response {
     use askama::Template;
     #[derive(Template)]
     #[template(path = "signup.html")]
     struct SignupPage<'a> {
         token: &'a str,
         error: Option<&'a str>,
+        email: &'a str,
+        display_name: &'a str,
     }
     match (SignupPage {
-        token: &token,
-        error: None,
+        token,
+        error,
+        email,
+        display_name,
     })
     .render()
     {
-        Ok(body) => axum::response::Html(body).into_response(),
+        Ok(body) => (status, axum::response::Html(body)).into_response(),
         Err(e) => ApiError::Template(e).into_response(),
     }
 }
@@ -556,7 +570,44 @@ async fn signup_post(
 ) -> Response {
     match signup_inner(&state, &token, &form, &headers).await {
         Ok(resp) => resp,
+        Err(ApiError::BadRequest(message)) => render_signup_page(
+            StatusCode::BAD_REQUEST,
+            &token,
+            Some(&message),
+            &form.email,
+            form.display_name.as_deref().unwrap_or(""),
+        ),
+        Err(ApiError::Conflict(message)) => render_signup_page(
+            StatusCode::CONFLICT,
+            &token,
+            Some(&message),
+            &form.email,
+            form.display_name.as_deref().unwrap_or(""),
+        ),
         Err(e) => e.into_response(),
+    }
+}
+
+fn signup_api_error(error: crate::flows::InviteSignupError) -> ApiError {
+    use crate::flows::InviteSignupError;
+    match error {
+        InviteSignupError::PasswordTooShort => {
+            ApiError::BadRequest("Password must be at least 10 characters.".into())
+        }
+        InviteSignupError::Invalid => ApiError::BadRequest("This invitation isn’t valid.".into()),
+        InviteSignupError::Expired => ApiError::BadRequest(
+            "This invitation has expired. Ask an administrator for a new one.".into(),
+        ),
+        InviteSignupError::AlreadyUsed => {
+            ApiError::BadRequest("This invitation has already been used.".into())
+        }
+        InviteSignupError::EmailMismatch => {
+            ApiError::BadRequest("This invitation is tied to a different email address.".into())
+        }
+        InviteSignupError::AlreadyRegistered => {
+            ApiError::Conflict("An account already exists for this email.".into())
+        }
+        InviteSignupError::Internal(error) => ApiError::Internal(error),
     }
 }
 
@@ -574,16 +625,7 @@ async fn signup_inner(
         form.display_name.as_deref(),
     )
     .await
-    .map_err(|e| {
-        let msg = e.to_string();
-        if msg.contains("password must be") {
-            ApiError::BadRequest(msg)
-        } else if msg.contains("already registered") {
-            ApiError::Conflict(msg)
-        } else {
-            ApiError::BadRequest(msg)
-        }
-    })?;
+    .map_err(signup_api_error)?;
 
     let session_id = auth::new_session_id();
     let expiry = OffsetDateTime::now_utc() + Duration::hours(24 * SESSION_LIFETIME_DAYS);
@@ -973,7 +1015,9 @@ pub async fn security_headers_layer(
 
 #[cfg(test)]
 mod tests {
-    use super::login_destination;
+    use super::{login_destination, signup_api_error};
+    use crate::error::ApiError;
+    use crate::flows::InviteSignupError;
 
     #[test]
     fn login_destination_accepts_local_paths() {
@@ -992,5 +1036,51 @@ mod tests {
         ] {
             assert_eq!(login_destination(next), "/");
         }
+    }
+
+    #[test]
+    fn signup_errors_are_safe_and_actionable() {
+        let cases = [
+            (
+                InviteSignupError::PasswordTooShort,
+                "Password must be at least 10 characters.",
+            ),
+            (InviteSignupError::Invalid, "This invitation isn’t valid."),
+            (
+                InviteSignupError::Expired,
+                "This invitation has expired. Ask an administrator for a new one.",
+            ),
+            (
+                InviteSignupError::AlreadyUsed,
+                "This invitation has already been used.",
+            ),
+            (
+                InviteSignupError::EmailMismatch,
+                "This invitation is tied to a different email address.",
+            ),
+            (
+                InviteSignupError::AlreadyRegistered,
+                "An account already exists for this email.",
+            ),
+        ];
+
+        for (input, expected) in cases {
+            match signup_api_error(input) {
+                ApiError::BadRequest(message) | ApiError::Conflict(message) => {
+                    assert_eq!(message, expected);
+                }
+                error => panic!("unexpected error: {error}"),
+            }
+        }
+    }
+
+    #[test]
+    fn signup_internal_errors_stay_internal() {
+        assert!(matches!(
+            signup_api_error(InviteSignupError::Internal(anyhow::anyhow!(
+                "connection closed"
+            ))),
+            ApiError::Internal(_)
+        ));
     }
 }

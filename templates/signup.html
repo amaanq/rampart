@@ -16,9 +16,9 @@
         {% endif %}
         <form method="post" action="/signup/{{ token }}" class="auth-form">
             <label for="email">Email</label>
-            <input id="email" name="email" type="email" autocomplete="username" autofocus required>
+            <input id="email" name="email" type="email" value="{{ email }}" autocomplete="username" autofocus required>
             <label for="display_name">Display name <span class="auth-optional">(optional)</span></label>
-            <input id="display_name" name="display_name" type="text" autocomplete="name">
+            <input id="display_name" name="display_name" type="text" value="{{ display_name }}" autocomplete="name">
             <label for="password">Password <span class="auth-optional">(min 10 chars)</span></label>
             <input id="password" name="password" type="password" autocomplete="new-password" minlength="10" required>
             <button type="submit" class="auth-submit">Create account</button>

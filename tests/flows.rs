@@ -9,8 +9,8 @@ use support::TestDb;
 use hmac_sha256::Hash;
 use rampart::auth::VerifyCache;
 use rampart::flows::{
-    apply_email_change, apply_mailbox_verify, apply_password_reset, claim_invite_and_create_user,
-    start_email_change, start_mailbox_verify, start_password_reset,
+    InviteSignupError, apply_email_change, apply_mailbox_verify, apply_password_reset,
+    claim_invite_and_create_user, start_email_change, start_mailbox_verify, start_password_reset,
 };
 use rampart::mailer::MemoryMailer;
 use time::{Duration, OffsetDateTime};
@@ -231,9 +231,7 @@ async fn signup_claim_atomic() {
         .unwrap();
     }
 
-    // Two concurrent signups against the SAME token: exactly one must
-    // win. The other gets the uniform "invite invalid" error (the token
-    // was claimed by the other transaction first).
+    // Two concurrent signups against the SAME token: exactly one must win.
     let pool1 = db.pool.clone();
     let pool2 = db.pool.clone();
     let h1 = tokio::spawn(async move {
@@ -247,13 +245,84 @@ async fn signup_claim_atomic() {
     let oks = [r1.is_ok(), r2.is_ok()].iter().filter(|b| **b).count();
     assert_eq!(oks, 1, "exactly one signup must win the race");
 
-    // The other arm must report invite-invalid (uniform error shape).
     let err = if r1.is_err() {
         r1.unwrap_err()
     } else {
         r2.unwrap_err()
     };
-    assert!(err.to_string().contains("invite invalid"), "got: {err}");
+    assert!(matches!(err, InviteSignupError::AlreadyUsed));
+
+    db.teardown().await;
+}
+
+#[tokio::test]
+async fn signup_reports_distinct_invite_failures() {
+    let db = test_db!();
+    let c = db.pool.get().await.unwrap();
+    let now = OffsetDateTime::now_utc();
+    let future = now + Duration::hours(24);
+    let past = now - Duration::hours(1);
+    let expired_hash = Hash::hash(b"expired-invite").to_vec();
+    let used_hash = Hash::hash(b"used-invite").to_vec();
+    let mismatch_hash = Hash::hash(b"mismatch-invite").to_vec();
+    c.execute(
+        "INSERT INTO invite_token (token_hash, expires_at) VALUES ($1, $2)",
+        &[&expired_hash, &past],
+    )
+    .await
+    .unwrap();
+    c.execute(
+        "INSERT INTO invite_token (token_hash, expires_at, used_at) VALUES ($1, $2, $3)",
+        &[&used_hash, &future, &now],
+    )
+    .await
+    .unwrap();
+    c.execute(
+        "INSERT INTO invite_token (token_hash, preset_email, expires_at) VALUES ($1, $2, $3)",
+        &[&mismatch_hash, &"invited@test", &future],
+    )
+    .await
+    .unwrap();
+    drop(c);
+
+    let invalid = claim_invite_and_create_user(
+        &db.pool,
+        "missing-invite",
+        "user@test",
+        "pw-1234567890",
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(invalid, InviteSignupError::Invalid));
+
+    let expired = claim_invite_and_create_user(
+        &db.pool,
+        "expired-invite",
+        "user@test",
+        "pw-1234567890",
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(expired, InviteSignupError::Expired));
+
+    let used =
+        claim_invite_and_create_user(&db.pool, "used-invite", "user@test", "pw-1234567890", None)
+            .await
+            .unwrap_err();
+    assert!(matches!(used, InviteSignupError::AlreadyUsed));
+
+    let mismatch = claim_invite_and_create_user(
+        &db.pool,
+        "mismatch-invite",
+        "user@test",
+        "pw-1234567890",
+        None,
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(mismatch, InviteSignupError::EmailMismatch));
 
     db.teardown().await;
 }

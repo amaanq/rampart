@@ -21,6 +21,24 @@ use crate::mailer::Mailer;
 
 pub const DEFAULT_TOKEN_TTL_HOURS: i64 = 1;
 
+#[derive(Debug, thiserror::Error)]
+pub enum InviteSignupError {
+    #[error("password must be at least 10 characters")]
+    PasswordTooShort,
+    #[error("invite is invalid")]
+    Invalid,
+    #[error("invite has expired")]
+    Expired,
+    #[error("invite has already been used")]
+    AlreadyUsed,
+    #[error("invite is tied to a different email")]
+    EmailMismatch,
+    #[error("email already registered")]
+    AlreadyRegistered,
+    #[error(transparent)]
+    Internal(#[from] anyhow::Error),
+}
+
 fn generate_token() -> (String, Vec<u8>) {
     let mut bytes = [0u8; 24];
     rand::rngs::OsRng
@@ -81,24 +99,39 @@ pub async fn claim_invite_and_create_user(
     email: &str,
     password: &str,
     display_name: Option<&str>,
-) -> anyhow::Result<(i64, bool)> {
+) -> std::result::Result<(i64, bool), InviteSignupError> {
     if password.len() < 10 {
-        anyhow::bail!("password must be at least 10 characters");
+        return Err(InviteSignupError::PasswordTooShort);
     }
     let token_hash = hash_token(token);
-    let mut c = pool.get().await?;
-    let txn = c.transaction().await?;
+    let mut c = pool.get().await.context("opening invite transaction")?;
+    let txn = c
+        .transaction()
+        .await
+        .context("starting invite transaction")?;
 
     let claimed = tokens::invite_claim()
         .bind(&txn, &token_hash, &email)
         .opt()
-        .await?;
+        .await
+        .context("claiming invite")?;
     if claimed.is_none() {
+        let failure = tokens::invite_failure()
+            .bind(&txn, &token_hash, &email)
+            .opt()
+            .await
+            .context("inspecting invite failure")?;
         txn.rollback().await.ok();
-        anyhow::bail!("invite invalid, expired, used, or for a different email");
+        return Err(match failure {
+            None => InviteSignupError::Invalid,
+            Some(failure) if failure.used => InviteSignupError::AlreadyUsed,
+            Some(failure) if failure.expired => InviteSignupError::Expired,
+            Some(failure) if failure.email_mismatch => InviteSignupError::EmailMismatch,
+            Some(_) => InviteSignupError::Invalid,
+        });
     }
 
-    let password_hash = hash_password(password)?;
+    let password_hash = hash_password(password).context("hashing invite password")?;
 
     let row = users::create_via_invite()
         .bind(&txn, &email, &password_hash, &display_name)
@@ -107,18 +140,19 @@ pub async fn claim_invite_and_create_user(
         .map_err(|e| {
             if let Some(db) = e.as_db_error() {
                 if db.code() == &tokio_postgres::error::SqlState::UNIQUE_VIOLATION {
-                    return anyhow::anyhow!("email already registered");
+                    return InviteSignupError::AlreadyRegistered;
                 }
             }
-            anyhow::anyhow!(e)
+            InviteSignupError::Internal(e.into())
         })?;
     let user_id = row.id;
     let is_admin = row.is_admin;
 
     tokens::invite_set_used_by()
         .bind(&txn, &user_id, &token_hash)
-        .await?;
-    txn.commit().await?;
+        .await
+        .context("recording invite user")?;
+    txn.commit().await.context("committing invite signup")?;
 
     Ok((user_id, is_admin))
 }

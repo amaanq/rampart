@@ -368,18 +368,52 @@ async fn login_post(Form(form): Form<PreviewLoginQuery>) -> Redirect {
     Redirect::to(preview_login_destination(&form.next))
 }
 
-async fn signup_page(Path(token): Path<String>) -> Response {
+fn render_signup_page(
+    token: &str,
+    error: Option<&str>,
+    email: &str,
+    display_name: &str,
+) -> Response {
     #[derive(Template)]
     #[template(path = "signup.html")]
     struct SignupPage<'a> {
         token: &'a str,
         error: Option<&'a str>,
+        email: &'a str,
+        display_name: &'a str,
     }
-    let t = SignupPage {
-        token: &token,
-        error: None,
+    render(&SignupPage {
+        token,
+        error,
+        email,
+        display_name,
+    })
+}
+
+async fn signup_page(Path(token): Path<String>) -> Response {
+    render_signup_page(&token, None, "", "")
+}
+
+#[derive(Deserialize)]
+struct PreviewSignupForm {
+    email: String,
+    #[serde(default)]
+    display_name: Option<String>,
+}
+
+async fn signup_post(Path(token): Path<String>, Form(form): Form<PreviewSignupForm>) -> Response {
+    let error = match token.as_str() {
+        "expired" => "This invitation has expired. Ask an administrator for a new one.",
+        "used" => "This invitation has already been used.",
+        "email-mismatch" => "This invitation is tied to a different email address.",
+        _ => "This invitation isn’t valid.",
     };
-    render(&t)
+    render_signup_page(
+        &token,
+        Some(error),
+        &form.email,
+        form.display_name.as_deref().unwrap_or(""),
+    )
 }
 
 async fn forgot_page() -> Response {
@@ -659,7 +693,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .service(ServeDir::new(static_dir));
     let app = Router::new()
         .route("/login", get(login_page).post(login_post))
-        .route("/signup/{token}", get(signup_page))
+        .route("/signup/{token}", get(signup_page).post(signup_post))
         .route("/auth/forgot", get(forgot_page))
         .route("/auth/reset/{token}", get(reset_page))
         .route("/auth/change-email/{token}", get(change_email_page))

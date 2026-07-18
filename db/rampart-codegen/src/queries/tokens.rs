@@ -12,6 +12,11 @@ pub struct InviteClaimParams<T1: crate::BytesSql, T2: crate::StringSql> {
     pub email: T2,
 }
 #[derive(Debug)]
+pub struct InviteFailureParams<T1: crate::BytesSql, T2: crate::StringSql> {
+    pub token_hash: T1,
+    pub email: T2,
+}
+#[derive(Debug)]
 pub struct InviteSetUsedByParams<T1: crate::BytesSql> {
     pub user_id: i64,
     pub token_hash: T1,
@@ -34,6 +39,12 @@ pub struct MailboxVerifyCreateParams<T1: crate::BytesSql> {
     pub token_hash: T1,
     pub mailbox_id: i64,
     pub expires_at: time::OffsetDateTime,
+}
+#[derive(Debug, Clone, PartialEq, Copy, serde::Serialize)]
+pub struct InviteFailure {
+    pub used: bool,
+    pub expired: bool,
+    pub email_mismatch: bool,
 }
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct EmailChangeClaim {
@@ -68,6 +79,70 @@ where
 {
     pub fn map<R>(self, mapper: fn(&[u8]) -> R) -> Vecu8Query<'c, 'a, 's, C, R, N> {
         Vecu8Query {
+            client: self.client,
+            params: self.params,
+            query: self.query,
+            cached: self.cached,
+            extractor: self.extractor,
+            mapper,
+        }
+    }
+    pub async fn one(self) -> Result<T, tokio_postgres::Error> {
+        let row =
+            crate::client::async_::one(self.client, self.query, &self.params, self.cached).await?;
+        Ok((self.mapper)((self.extractor)(&row)?))
+    }
+    pub async fn all(self) -> Result<Vec<T>, tokio_postgres::Error> {
+        self.iter().await?.try_collect().await
+    }
+    pub async fn opt(self) -> Result<Option<T>, tokio_postgres::Error> {
+        let opt_row =
+            crate::client::async_::opt(self.client, self.query, &self.params, self.cached).await?;
+        Ok(opt_row
+            .map(|row| {
+                let extracted = (self.extractor)(&row)?;
+                Ok((self.mapper)(extracted))
+            })
+            .transpose()?)
+    }
+    pub async fn iter(
+        self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<T, tokio_postgres::Error>> + 'c,
+        tokio_postgres::Error,
+    > {
+        let stream = crate::client::async_::raw(
+            self.client,
+            self.query,
+            crate::slice_iter(&self.params),
+            self.cached,
+        )
+        .await?;
+        let mapped = stream
+            .map(move |res| {
+                res.and_then(|row| {
+                    let extracted = (self.extractor)(&row)?;
+                    Ok((self.mapper)(extracted))
+                })
+            })
+            .into_stream();
+        Ok(mapped)
+    }
+}
+pub struct InviteFailureQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
+    client: &'c C,
+    params: [&'a (dyn postgres_types::ToSql + Sync); N],
+    query: &'static str,
+    cached: Option<&'s tokio_postgres::Statement>,
+    extractor: fn(&tokio_postgres::Row) -> Result<InviteFailure, tokio_postgres::Error>,
+    mapper: fn(InviteFailure) -> T,
+}
+impl<'c, 'a, 's, C, T: 'c, const N: usize> InviteFailureQuery<'c, 'a, 's, C, T, N>
+where
+    C: GenericClient,
+{
+    pub fn map<R>(self, mapper: fn(InviteFailure) -> R) -> InviteFailureQuery<'c, 'a, 's, C, R, N> {
+        InviteFailureQuery {
             client: self.client,
             params: self.params,
             query: self.query,
@@ -349,6 +424,61 @@ impl<'c, 'a, 's, C: GenericClient, T1: crate::BytesSql, T2: crate::StringSql>
         client: &'c C,
         params: &'a InviteClaimParams<T1, T2>,
     ) -> Vecu8Query<'c, 'a, 's, C, Vec<u8>, 2> {
+        self.bind(client, &params.token_hash, &params.email)
+    }
+}
+pub struct InviteFailureStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn invite_failure() -> InviteFailureStmt {
+    InviteFailureStmt(
+        "WITH invite AS ( SELECT used_at, expires_at, preset_email FROM invite_token WHERE token_hash = $1 ) SELECT used_at IS NOT NULL AS used, expires_at <= now() AS expired, preset_email IS NOT NULL AND preset_email <> $2::CITEXT AS email_mismatch FROM invite",
+        None,
+    )
+}
+impl InviteFailureStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient, T1: crate::BytesSql, T2: crate::StringSql>(
+        &'s self,
+        client: &'c C,
+        token_hash: &'a T1,
+        email: &'a T2,
+    ) -> InviteFailureQuery<'c, 'a, 's, C, InviteFailure, 2> {
+        InviteFailureQuery {
+            client,
+            params: [token_hash, email],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |row: &tokio_postgres::Row| -> Result<InviteFailure, tokio_postgres::Error> {
+                Ok(InviteFailure {
+                    used: row.try_get(0)?,
+                    expired: row.try_get(1)?,
+                    email_mismatch: row.try_get(2)?,
+                })
+            },
+            mapper: |it| InviteFailure::from(it),
+        }
+    }
+}
+impl<'c, 'a, 's, C: GenericClient, T1: crate::BytesSql, T2: crate::StringSql>
+    crate::client::async_::Params<
+        'c,
+        'a,
+        's,
+        InviteFailureParams<T1, T2>,
+        InviteFailureQuery<'c, 'a, 's, C, InviteFailure, 2>,
+        C,
+    > for InviteFailureStmt
+{
+    fn params(
+        &'s self,
+        client: &'c C,
+        params: &'a InviteFailureParams<T1, T2>,
+    ) -> InviteFailureQuery<'c, 'a, 's, C, InviteFailure, 2> {
         self.bind(client, &params.token_hash, &params.email)
     }
 }

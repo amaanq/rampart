@@ -12,6 +12,17 @@ WHERE token_hash = :token_hash
   AND (preset_email IS NULL OR preset_email = :email::CITEXT)
 RETURNING token_hash;
 
+--! invite_failure
+WITH invite AS (
+    SELECT used_at, expires_at, preset_email
+    FROM invite_token
+    WHERE token_hash = :token_hash
+)
+SELECT used_at IS NOT NULL AS used,
+       expires_at <= now() AS expired,
+       preset_email IS NOT NULL AND preset_email <> :email::CITEXT AS email_mismatch
+FROM invite;
+
 --! invite_set_used_by
 UPDATE invite_token SET used_by = :user_id WHERE token_hash = :token_hash;
 
