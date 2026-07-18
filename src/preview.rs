@@ -533,13 +533,30 @@ async fn change_email_page(Path(token): Path<String>) -> Response {
     confirm_page(token, "change-email").await
 }
 
-async fn change_email_post() -> Response {
-    render_simple_message_page(
-        "Email changed",
-        "Your rampart sign-in email has been updated.",
-        "/settings",
-        "Go to settings",
-    )
+async fn change_email_post(Path(token): Path<String>) -> Response {
+    let (heading, message) = match token.as_str() {
+        "invalid" => (
+            "Email change link isn’t valid",
+            "Check that you opened the complete link from your email.",
+        ),
+        "expired" => (
+            "Email change link expired",
+            "This email change link has expired. Start the change again from settings.",
+        ),
+        "used" => (
+            "Email change link already used",
+            "This email change link has already been used. Check your current address in settings.",
+        ),
+        "email-in-use" => (
+            "Email already in use",
+            "Another account already uses this email address. Choose a different address in settings.",
+        ),
+        _ => (
+            "Email changed",
+            "Your rampart sign-in email has been updated.",
+        ),
+    };
+    render_simple_message_page(heading, message, "/settings", "Go to settings")
 }
 
 async fn mailbox_verify_page(Path(token): Path<String>) -> Response {

@@ -9,9 +9,9 @@ use support::TestDb;
 use hmac_sha256::Hash;
 use rampart::auth::VerifyCache;
 use rampart::flows::{
-    InviteSignupError, PasswordResetError, apply_email_change, apply_mailbox_verify,
-    apply_password_reset, claim_invite_and_create_user, start_email_change, start_mailbox_verify,
-    start_password_reset,
+    EmailChangeError, InviteSignupError, PasswordResetError, apply_email_change,
+    apply_mailbox_verify, apply_password_reset, claim_invite_and_create_user, start_email_change,
+    start_mailbox_verify, start_password_reset,
 };
 use rampart::mailer::MemoryMailer;
 use time::{Duration, OffsetDateTime};
@@ -130,6 +130,67 @@ async fn email_change_round_trip() {
         .unwrap();
     let e: String = row.get("email");
     assert_eq!(e, "alice2@test");
+
+    db.teardown().await;
+}
+
+#[tokio::test]
+async fn email_change_reports_distinct_failures() {
+    let db = test_db!();
+    let (uid, _taken_uid) = {
+        let c = db.pool.get().await.unwrap();
+        (
+            seed_user(&c, "alice@test").await,
+            seed_user(&c, "taken@test").await,
+        )
+    };
+    let now = OffsetDateTime::now_utc();
+    let future = now + Duration::hours(1);
+    let past = now - Duration::hours(1);
+    let expired_hash = Hash::hash(b"expired-email-change").to_vec();
+    let used_hash = Hash::hash(b"used-email-change").to_vec();
+    let duplicate_hash = Hash::hash(b"duplicate-email-change").to_vec();
+    {
+        let c = db.pool.get().await.unwrap();
+        c.execute(
+            "INSERT INTO email_change_token (token_hash, user_id, new_email, expires_at) VALUES ($1, $2, $3, $4)",
+            &[&expired_hash, &uid, &"new@test", &past],
+        )
+        .await
+        .unwrap();
+        c.execute(
+            "INSERT INTO email_change_token (token_hash, user_id, new_email, expires_at, used_at) VALUES ($1, $2, $3, $4, $5)",
+            &[&used_hash, &uid, &"new@test", &future, &now],
+        )
+        .await
+        .unwrap();
+        c.execute(
+            "INSERT INTO email_change_token (token_hash, user_id, new_email, expires_at) VALUES ($1, $2, $3, $4)",
+            &[&duplicate_hash, &uid, &"taken@test", &future],
+        )
+        .await
+        .unwrap();
+    }
+
+    let invalid = apply_email_change(&db.pool, "missing-email-change")
+        .await
+        .unwrap_err();
+    assert!(matches!(invalid, EmailChangeError::Invalid));
+
+    let expired = apply_email_change(&db.pool, "expired-email-change")
+        .await
+        .unwrap_err();
+    assert!(matches!(expired, EmailChangeError::Expired));
+
+    let used = apply_email_change(&db.pool, "used-email-change")
+        .await
+        .unwrap_err();
+    assert!(matches!(used, EmailChangeError::AlreadyUsed));
+
+    let duplicate = apply_email_change(&db.pool, "duplicate-email-change")
+        .await
+        .unwrap_err();
+    assert!(matches!(duplicate, EmailChangeError::AlreadyRegistered));
 
     db.teardown().await;
 }

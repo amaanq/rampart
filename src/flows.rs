@@ -53,6 +53,20 @@ pub enum PasswordResetError {
     Internal(#[from] anyhow::Error),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum EmailChangeError {
+    #[error("email change token is invalid")]
+    Invalid,
+    #[error("email change token has expired")]
+    Expired,
+    #[error("email change token has already been used")]
+    AlreadyUsed,
+    #[error("email already registered")]
+    AlreadyRegistered,
+    #[error(transparent)]
+    Internal(#[from] anyhow::Error),
+}
+
 fn generate_token() -> (String, Vec<u8>) {
     let mut bytes = [0u8; 24];
     rand::rngs::OsRng
@@ -288,12 +302,34 @@ pub async fn start_email_change(
     Ok(())
 }
 
-pub async fn apply_email_change(pool: &Pool, token: &str) -> Result<String> {
-    let mut c = pool.get().await?;
+pub async fn apply_email_change(
+    pool: &Pool,
+    token: &str,
+) -> std::result::Result<String, EmailChangeError> {
+    let mut c = pool.get().await.context("opening email change")?;
     let hash = hash_token(token);
-    let txn = c.transaction().await?;
-    let Some(claimed) = tokens::email_change_claim().bind(&txn, &hash).opt().await? else {
-        anyhow::bail!("invalid, expired, or already-used token");
+    let txn = c
+        .transaction()
+        .await
+        .context("starting email change transaction")?;
+    let Some(claimed) = tokens::email_change_claim()
+        .bind(&txn, &hash)
+        .opt()
+        .await
+        .context("claiming email change token")?
+    else {
+        let failure = tokens::email_change_failure()
+            .bind(&txn, &hash)
+            .opt()
+            .await
+            .context("inspecting email change failure")?;
+        txn.rollback().await.ok();
+        return Err(match failure {
+            None => EmailChangeError::Invalid,
+            Some(failure) if failure.used => EmailChangeError::AlreadyUsed,
+            Some(failure) if failure.expired => EmailChangeError::Expired,
+            Some(_) => EmailChangeError::Invalid,
+        });
     };
     let user_id = claimed.user_id;
     let new_email = claimed.new_email;
@@ -303,12 +339,12 @@ pub async fn apply_email_change(pool: &Pool, token: &str) -> Result<String> {
         .map_err(|e| {
             if let Some(db) = e.as_db_error() {
                 if db.code() == &tokio_postgres::error::SqlState::UNIQUE_VIOLATION {
-                    return anyhow::anyhow!("email already registered");
+                    return EmailChangeError::AlreadyRegistered;
                 }
             }
-            anyhow::anyhow!(e)
+            EmailChangeError::Internal(e.into())
         })?;
-    txn.commit().await?;
+    txn.commit().await.context("committing email change")?;
     tracing::info!(user_id, new_email, "email changed");
     Ok(new_email)
 }

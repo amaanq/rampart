@@ -829,7 +829,41 @@ async fn change_email_post(State(state): State<AppState>, Path(token): Path<Stri
             "/settings",
             "Go to settings",
         ),
-        Err(e) => render_error(&format!("email change failed: {e}")),
+        Err(crate::flows::EmailChangeError::Invalid) => render_simple_message(
+            StatusCode::BAD_REQUEST,
+            "Email change link isn’t valid",
+            "Check that you opened the complete link from your email.",
+            true,
+            "/settings",
+            "Go to settings",
+        ),
+        Err(crate::flows::EmailChangeError::Expired) => render_simple_message(
+            StatusCode::GONE,
+            "Email change link expired",
+            "This email change link has expired. Start the change again from settings.",
+            true,
+            "/settings",
+            "Go to settings",
+        ),
+        Err(crate::flows::EmailChangeError::AlreadyUsed) => render_simple_message(
+            StatusCode::GONE,
+            "Email change link already used",
+            "This email change link has already been used. Check your current address in settings.",
+            true,
+            "/settings",
+            "Go to settings",
+        ),
+        Err(crate::flows::EmailChangeError::AlreadyRegistered) => render_simple_message(
+            StatusCode::CONFLICT,
+            "Email already in use",
+            "Another account already uses this email address. Choose a different address in settings.",
+            true,
+            "/settings",
+            "Go to settings",
+        ),
+        Err(crate::flows::EmailChangeError::Internal(error)) => {
+            ApiError::Internal(error).into_response()
+        }
     }
 }
 
