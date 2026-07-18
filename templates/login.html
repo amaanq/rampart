@@ -22,9 +22,9 @@
         <form method="post" action="/login" class="auth-form" data-native-submit data-pending-label="Signing in…">
             <input type="hidden" name="next" value="{{ next }}">
             <label for="email">Email</label>
-            <input id="email" name="email" type="email" autocomplete="username" autofocus required>
+            <input id="email" name="email" type="email" value="{{ email }}" autocomplete="username" {% if !focus_password %}autofocus{% endif %} required>
             <label for="password">Password</label>
-            <input id="password" name="password" type="password" autocomplete="current-password" required>
+            <input id="password" name="password" type="password" autocomplete="current-password" {% if focus_password %}autofocus{% endif %} required>
             <button type="submit" class="auth-submit">Sign in</button>
         </form>
         <div class="auth-sep" role="separator"><span>or</span></div>

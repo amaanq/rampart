@@ -176,11 +176,15 @@ async fn login_page(State(state): State<AppState>, Query(query): Query<LoginQuer
         error: Option<&'a str>,
         next: &'a str,
         password_reset: bool,
+        email: &'a str,
+        focus_password: bool,
     }
     match (LoginPage {
         error: None,
         next: login_destination(&query.next),
         password_reset: query.reset,
+        email: "",
+        focus_password: false,
     })
     .render()
     {
@@ -387,7 +391,11 @@ async fn login_post(
             Ok(false) => {
                 return (
                     StatusCode::TOO_MANY_REQUESTS,
-                    login_page_with_error("too many login attempts; try again later", &form.next),
+                    login_page_with_error(
+                        "Too many sign-in attempts. Try again later.",
+                        &form.next,
+                        &form.email,
+                    ),
                 )
                     .into_response();
             }
@@ -407,7 +415,7 @@ async fn login_post(
         Ok(None) => {
             return (
                 StatusCode::UNAUTHORIZED,
-                login_page_with_error("invalid credentials", &form.next),
+                login_page_with_error("Email or password is incorrect.", &form.next, &form.email),
             )
                 .into_response();
         }
@@ -472,7 +480,7 @@ fn build_clear_session_cookie(state: &AppState) -> String {
     format!("{SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax{secure_attr}; Max-Age=0")
 }
 
-fn login_page_with_error(msg: &str, next: &str) -> Response {
+fn login_page_with_error(msg: &str, next: &str, email: &str) -> Response {
     use askama::Template;
     #[derive(Template)]
     #[template(path = "login.html")]
@@ -480,11 +488,15 @@ fn login_page_with_error(msg: &str, next: &str) -> Response {
         error: Option<&'a str>,
         next: &'a str,
         password_reset: bool,
+        email: &'a str,
+        focus_password: bool,
     }
     match (LoginPage {
         error: Some(msg),
         next: login_destination(next),
         password_reset: false,
+        email,
+        focus_password: true,
     })
     .render()
     {

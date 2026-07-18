@@ -363,6 +363,8 @@ struct PreviewLoginQuery {
     next: String,
     #[serde(default)]
     reset: bool,
+    #[serde(default)]
+    email: String,
 }
 
 fn preview_login_destination(next: &str) -> &str {
@@ -377,23 +379,52 @@ fn preview_login_destination(next: &str) -> &str {
     }
 }
 
-async fn login_page(Query(query): Query<PreviewLoginQuery>) -> Response {
+fn render_login_page(
+    error: Option<&str>,
+    next: &str,
+    password_reset: bool,
+    email: &str,
+    focus_password: bool,
+) -> Response {
     #[derive(Template)]
     #[template(path = "login.html")]
     struct LoginPage<'a> {
         error: Option<&'a str>,
         next: &'a str,
         password_reset: bool,
+        email: &'a str,
+        focus_password: bool,
     }
     render(&LoginPage {
-        error: None,
-        next: preview_login_destination(&query.next),
-        password_reset: query.reset,
+        error,
+        next,
+        password_reset,
+        email,
+        focus_password,
     })
 }
 
-async fn login_post(Form(form): Form<PreviewLoginQuery>) -> Redirect {
-    Redirect::to(preview_login_destination(&form.next))
+async fn login_page(Query(query): Query<PreviewLoginQuery>) -> Response {
+    render_login_page(
+        None,
+        preview_login_destination(&query.next),
+        query.reset,
+        "",
+        false,
+    )
+}
+
+async fn login_post(Form(form): Form<PreviewLoginQuery>) -> Response {
+    if form.email == "invalid@preview.test" {
+        return render_login_page(
+            Some("Email or password is incorrect."),
+            preview_login_destination(&form.next),
+            false,
+            &form.email,
+            true,
+        );
+    }
+    Redirect::to(preview_login_destination(&form.next)).into_response()
 }
 
 fn render_signup_page(
