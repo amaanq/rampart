@@ -18,6 +18,15 @@ pub fn build(cfg: &crate::config::Config) -> Result<Webauthn> {
         .context("webauthn build")
 }
 
+pub fn user_handle(user_id: i64) -> Uuid {
+    let mut hasher = hmac_sha256::Hash::new();
+    hasher.update(b"rampart-user-");
+    hasher.update(&user_id.to_be_bytes());
+    let digest = hasher.finalize();
+    let bytes: [u8; 16] = digest[..16].try_into().unwrap();
+    Uuid::from_bytes(bytes)
+}
+
 fn new_ceremony_id() -> Vec<u8> {
     let mut buf = [0u8; 16];
     rand::rngs::OsRng
@@ -56,6 +65,20 @@ pub async fn save_authentication_state(
     Ok(id)
 }
 
+pub async fn save_discoverable_authentication_state(
+    pool: &deadpool_postgres::Pool,
+    state: &DiscoverableAuthentication,
+) -> Result<Vec<u8>> {
+    let id = new_ceremony_id();
+    let blob = serde_json::to_vec(state)?;
+    let expires = OffsetDateTime::now_utc() + Duration::minutes(10);
+    let c = pool.get().await?;
+    webauthn::ceremony_insert_auth()
+        .bind(&c, &id, &None, &blob, &expires)
+        .await?;
+    Ok(id)
+}
+
 pub async fn load_registration_state(
     pool: &deadpool_postgres::Pool,
     id: &[u8],
@@ -75,6 +98,20 @@ pub async fn load_authentication_state(
     pool: &deadpool_postgres::Pool,
     id: &[u8],
 ) -> Result<PasskeyAuthentication> {
+    let c = pool.get().await?;
+    let id_vec = id.to_vec();
+    let blob = webauthn::ceremony_consume_auth()
+        .bind(&c, &id_vec)
+        .opt()
+        .await?
+        .context("authentication ceremony not found or expired")?;
+    Ok(serde_json::from_slice(&blob)?)
+}
+
+pub async fn load_discoverable_authentication_state(
+    pool: &deadpool_postgres::Pool,
+    id: &[u8],
+) -> Result<DiscoverableAuthentication> {
     let c = pool.get().await?;
     let id_vec = id.to_vec();
     let blob = webauthn::ceremony_consume_auth()

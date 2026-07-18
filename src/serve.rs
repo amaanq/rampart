@@ -1017,6 +1017,7 @@ struct PasskeyStartReq {
 struct PasskeyStartResp {
     ceremony_id: String,
     challenge: serde_json::Value,
+    discoverable: bool,
 }
 
 async fn passkey_auth_start(
@@ -1043,6 +1044,17 @@ async fn passkey_auth_start_inner(
     state: &AppState,
     email: String,
 ) -> anyhow::Result<PasskeyStartResp> {
+    if email.trim().is_empty() {
+        let (challenge, auth_state) = state.webauthn.start_discoverable_authentication()?;
+        let id = crate::webauthn::save_discoverable_authentication_state(&state.pool, &auth_state)
+            .await?;
+        return Ok(PasskeyStartResp {
+            ceremony_id: hex::encode(&id),
+            challenge: serde_json::to_value(&challenge)?,
+            discoverable: true,
+        });
+    }
+
     let (_user_id, passkeys) =
         crate::webauthn::load_passkeys_for_email(&state.pool, &email).await?;
     let (challenge, auth_state) = state.webauthn.start_passkey_authentication(&passkeys)?;
@@ -1050,6 +1062,7 @@ async fn passkey_auth_start_inner(
     Ok(PasskeyStartResp {
         ceremony_id: hex::encode(&id),
         challenge: serde_json::to_value(&challenge)?,
+        discoverable: false,
     })
 }
 
@@ -1057,6 +1070,8 @@ async fn passkey_auth_start_inner(
 struct PasskeyFinishReq {
     ceremony_id: String,
     credential: webauthn_rs::prelude::PublicKeyCredential,
+    #[serde(default)]
+    discoverable: bool,
 }
 
 async fn passkey_auth_finish(
@@ -1080,17 +1095,45 @@ async fn passkey_auth_finish_inner(
     body: PasskeyFinishReq,
 ) -> anyhow::Result<Response> {
     let id = hex::decode(&body.ceremony_id)?;
-    let auth_state = crate::webauthn::load_authentication_state(&state.pool, &id).await?;
-    let result = state
-        .webauthn
-        .finish_passkey_authentication(&body.credential, &auth_state)?;
+    let (result, user_id) = if body.discoverable {
+        let auth_state =
+            crate::webauthn::load_discoverable_authentication_state(&state.pool, &id).await?;
+        let (handle, credential_id) = state
+            .webauthn
+            .identify_discoverable_authentication(&body.credential)?;
+        let credential_id = credential_id.to_vec();
+        let c = state.pool.get().await?;
+        let user_id = webauthn::credential_user_id()
+            .bind(&c, &credential_id)
+            .one()
+            .await?;
+        anyhow::ensure!(handle == crate::webauthn::user_handle(user_id));
+        let passkeys = crate::webauthn::load_passkeys_for_user(&state.pool, user_id).await?;
+        let discoverable_keys = passkeys
+            .iter()
+            .map(webauthn_rs::prelude::DiscoverableKey::from)
+            .collect::<Vec<_>>();
+        let result = state.webauthn.finish_discoverable_authentication(
+            &body.credential,
+            auth_state,
+            &discoverable_keys,
+        )?;
+        (result, user_id)
+    } else {
+        let auth_state = crate::webauthn::load_authentication_state(&state.pool, &id).await?;
+        let result = state
+            .webauthn
+            .finish_passkey_authentication(&body.credential, &auth_state)?;
+        let credential_id = result.cred_id().as_ref().to_vec();
+        let c = state.pool.get().await?;
+        let user_id = webauthn::credential_user_id()
+            .bind(&c, &credential_id)
+            .one()
+            .await?;
+        (result, user_id)
+    };
     let cred_id: &[u8] = result.cred_id().as_ref();
     let c = state.pool.get().await?;
-    let cred_id_vec = cred_id.to_vec();
-    let user_id = webauthn::credential_user_id()
-        .bind(&c, &cred_id_vec)
-        .one()
-        .await?;
     // webauthn-rs needs the full updated Passkey blob (counter + backup
     // flags) round-tripped, not just sign_count.
     crate::webauthn::update_credential_after_auth(&state.pool, cred_id, &result).await?;

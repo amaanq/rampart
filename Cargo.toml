@@ -73,6 +73,7 @@ lettre = {
 webauthn-rs = {
 	version = "0.5",
 	features = [
+		"conditional-ui",
 		"danger-allow-state-serialisation",
 	],
 }

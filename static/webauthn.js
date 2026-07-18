@@ -98,6 +98,9 @@ async function registerPasskey(ev) {
         }
         const { ceremony_id, challenge } = await r1.json();
         const pk = normalize(challenge);
+        if (pk.authenticatorSelection) {
+            pk.authenticatorSelection.residentKey = 'preferred';
+        }
         const cred = await navigator.credentials.create({ publicKey: pk });
         if (!cred) throw new Error('Passkey registration was cancelled.');
         const r2 = await fetch('/api/v1/user/webauthn/register/finish', {
@@ -127,9 +130,8 @@ async function registerPasskey(ev) {
 }
 
 // Passkey LOGIN. Used by the /login page's optional passkey form.
-// Submits the user's email, calls /api/v1/auth/passkey/start, drives
-// navigator.credentials.get(), then /finish — on success, server sets
-// the session cookie and we redirect to /.
+// An empty email starts account discovery; a supplied email keeps
+// non-discoverable security keys usable.
 async function loginWithPasskey(ev) {
     ev.preventDefault();
     const form = ev.currentTarget;
@@ -139,11 +141,6 @@ async function loginWithPasskey(ev) {
         document.getElementById('pk-login-email') ||
         document.getElementById('email');
     const email = (emailEl && emailEl.value.trim()) || '';
-    if (!email) {
-        showPasskeyFormStatus(form, 'Enter your email above first.', true);
-        if (emailEl) emailEl.focus();
-        return;
-    }
     showPasskeyFormStatus(form, 'Preparing passkey sign-in…', false);
     setPasskeyFormPending(form, true);
 
@@ -162,7 +159,7 @@ async function loginWithPasskey(ev) {
                 : 'Passkey sign-in is unavailable.';
             throw new Error(message);
         }
-        const { ceremony_id, challenge } = await r1.json();
+        const { ceremony_id, challenge, discoverable } = await r1.json();
         const pk = normalize(challenge);
         showPasskeyFormStatus(form, 'Waiting for your passkey…', false);
         const cred = await navigator.credentials.get({ publicKey: pk });
@@ -170,7 +167,7 @@ async function loginWithPasskey(ev) {
         const r2 = await fetch('/api/v1/auth/passkey/finish', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ceremony_id, credential: serializeCred(cred) }),
+            body: JSON.stringify({ ceremony_id, credential: serializeCred(cred), discoverable }),
         });
         if (!r2.ok) throw new Error('Passkey sign-in failed.');
         showPasskeyFormStatus(form, 'Signed in. Redirecting…', false);

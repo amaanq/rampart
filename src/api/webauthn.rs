@@ -30,14 +30,7 @@ pub(super) async fn webauthn_register_start(
         .iter()
         .map(|p| p.cred_id().clone())
         .collect::<Vec<_>>();
-    // Stable per-account UUID derived from user_id. Webauthn requires
-    // <=64 bytes; use a 16-byte SHA256 prefix.
-    let mut hasher = hmac_sha256::Hash::new();
-    hasher.update(b"rampart-user-");
-    hasher.update(&p.user_id.to_be_bytes());
-    let digest = hasher.finalize();
-    let handle_bytes: [u8; 16] = digest[..16].try_into().unwrap();
-    let user_handle = webauthn_rs::prelude::Uuid::from_bytes(handle_bytes);
+    let user_handle = crate::webauthn::user_handle(p.user_id);
     let c = state.pool.get().await?;
     let r = users::display_for_webauthn()
         .bind(&c, &p.user_id)
