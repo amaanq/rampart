@@ -1,4 +1,7 @@
-use std::net::SocketAddr;
+use std::{
+   net::SocketAddr,
+   time::Duration as StdDuration,
+};
 
 use askama::Template;
 use axum::{
@@ -16,17 +19,11 @@ use axum::{
    },
    response::{
       Html,
-      IntoResponse,
+      IntoResponse as _,
       Redirect,
       Response,
    },
-   routing::{
-      delete,
-      get,
-      patch,
-      post,
-      put,
-   },
+   routing,
 };
 use rampart_codegen::queries::{
    contacts as cq,
@@ -40,6 +37,11 @@ use serde::Deserialize;
 use time::{
    Duration,
    OffsetDateTime,
+};
+use tokio::{
+   net::TcpListener,
+   signal,
+   time as tokio_time,
 };
 use tower::ServiceBuilder;
 use tower_http::{
@@ -149,18 +151,18 @@ fn mock_aliases() -> Vec<AliasRowView> {
       .iter()
       .enumerate()
       .map(
-         |(i, (addr, ena, pin, note, fwd, blk, rep, last))| AliasRowView {
-            id:            (i + 1) as i64,
-            address:       addr.to_string(),
-            enabled:       *ena,
-            note:          note.map(|s| s.to_string()),
-            pinned:        *pin,
-            nb_forward:    *fwd,
-            nb_block:      *blk,
-            nb_reply:      *rep,
+         |(i, &(addr, ena, pin, note, fwd, blk, rep, last))| AliasRowView {
+            id:            i64::try_from(i + 1).expect("row index fits in i64"),
+            address:       addr.to_owned(),
+            enabled:       ena,
+            note:          note.map(str::to_owned),
+            pinned:        pin,
+            nb_forward:    fwd,
+            nb_block:      blk,
+            nb_reply:      rep,
             mailbox:       mbox.clone(),
             domain:        "dev.local".into(),
-            last_email_at: *last,
+            last_email_at: last,
          },
       )
       .collect()
@@ -175,22 +177,24 @@ fn mock_domains() -> Vec<DomainRowView> {
    entries
       .iter()
       .enumerate()
-      .map(|(i, (dom, shared, mine, rp, reply, n))| DomainRowView {
-         id:            (i + 1) as i64,
-         domain:        dom.to_string(),
-         shared:        *shared,
-         mine:          *mine,
-         random_prefix: rp.to_string(),
-         reply_prefix:  reply.to_string(),
-         nb_alias:      *n,
-         setup_state:   ["setup", "ready", "attention"][i].to_owned(),
-      })
+      .map(
+         |(i, &(ref dom, ref shared, ref mine, ref rp, ref reply, ref n))| DomainRowView {
+            id:            i64::try_from(i + 1).expect("row index fits in i64"),
+            domain:        dom.to_string(),
+            shared:        *shared,
+            mine:          *mine,
+            random_prefix: rp.to_string(),
+            reply_prefix:  reply.to_string(),
+            nb_alias:      *n,
+            setup_state:   ["setup", "ready", "attention"][i].to_owned(),
+         },
+      )
       .collect()
 }
 
 fn mock_domain_setup(id: i64) -> DomainSetup {
    let domain = ["dev.local", "shared.example", "admin.example"]
-      .get(id.saturating_sub(1) as usize)
+      .get(usize::try_from(id.saturating_sub(1)).unwrap_or(usize::MAX))
       .copied()
       .unwrap_or("dev.local");
    let dkim = vec![
@@ -222,9 +226,8 @@ fn mock_domain_setup(id: i64) -> DomainSetup {
       .iter()
       .map(|record| {
          let record_status = match id {
-            2 => RecordStatus::Found,
             3 if record.id == "dmarc" => RecordStatus::Mismatch,
-            3 => RecordStatus::Found,
+            2 | 3 => RecordStatus::Found,
             _ if matches!(record.id.as_str(), "mx" | "spf") => RecordStatus::Found,
             _ => RecordStatus::Pending,
          };
@@ -263,13 +266,13 @@ fn mock_mailboxes() -> Vec<mbq::MailboxRow> {
       .iter()
       .enumerate()
       .map(
-         |(i, (email, name, verified, enabled, nb))| mbq::MailboxRow {
-            id:           (i + 1) as i64,
+         |(i, &(ref email, ref name, ref verified, ref enabled, ref nb))| mbq::MailboxRow {
+            id:           i64::try_from(i + 1).expect("row index fits in i64"),
             email:        email.to_string(),
-            display_name: name.map(|s| s.to_string()),
+            display_name: name.map(str::to_owned),
             verified:     *verified,
             enabled:      *enabled,
-            created_at:   ts_ago(24 * (i as i64 + 1)),
+            created_at:   ts_ago(24 * (i64::try_from(i).expect("index fits in i64") + 1)),
             nb_alias:     *nb,
          },
       )
@@ -419,12 +422,15 @@ fn mock_activities() -> Vec<elq::ActivityForAlias> {
    ]
 }
 
-fn render<T: Template>(t: &T) -> Response {
-   match t.render() {
+fn render<T>(template: &T) -> Response
+where
+   T: Template,
+{
+   match template.render() {
       Ok(body) => (StatusCode::OK, Html(body)).into_response(),
-      Err(e) => (
+      Err(err) => (
          StatusCode::INTERNAL_SERVER_ERROR,
-         format!("template error: {e}"),
+         format!("template error: {err}"),
       )
          .into_response(),
    }
@@ -458,7 +464,7 @@ fn user_email() -> String {
    "dev@dev.local (preview)".into()
 }
 
-fn is_admin() -> bool {
+const fn is_admin() -> bool {
    true
 }
 
@@ -609,7 +615,7 @@ async fn forgot_post(Form(form): Form<PreviewForgotForm>) -> Response {
       );
    }
    if form.email == "slow@preview.test" {
-      tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+      tokio_time::sleep(StdDuration::from_millis(1200)).await;
    }
    render_forgot_page(true, None, "")
 }
@@ -650,7 +656,7 @@ async fn reset_post(Path(token): Path<String>) -> Response {
    render_simple_message_page(heading, message, "/auth/forgot", "Request a new reset link")
 }
 
-async fn confirm_page(token: String, which: &str) -> Response {
+fn confirm_page(token: &str, which: &str) -> Response {
    #[derive(Template)]
    #[template(path = "confirm.html")]
    struct ConfirmPage<'a> {
@@ -693,7 +699,7 @@ async fn confirm_page(token: String, which: &str) -> Response {
 }
 
 async fn change_email_page(Path(token): Path<String>) -> Response {
-   confirm_page(token, "change-email").await
+   confirm_page(&token, "change-email")
 }
 
 async fn change_email_post(Path(token): Path<String>) -> Response {
@@ -723,7 +729,7 @@ async fn change_email_post(Path(token): Path<String>) -> Response {
 }
 
 async fn mailbox_verify_page(Path(token): Path<String>) -> Response {
-   confirm_page(token, "verify").await
+   confirm_page(&token, "verify")
 }
 
 async fn mailbox_verify_post(Path(token): Path<String>) -> Response {
@@ -793,6 +799,10 @@ async fn setup_post(Form(form): Form<PreviewSetupForm>) -> Response {
 }
 
 #[derive(Default, Deserialize)]
+#[expect(
+   clippy::struct_excessive_bools,
+   reason = "preview query toggles, one per mock scenario"
+)]
 struct PreviewListQuery {
    #[serde(default)]
    empty:         bool,
@@ -835,7 +845,7 @@ async fn aliases_page(Query(query): Query<PreviewListQuery>) -> Response {
    } else {
       preview_list(&query, mock_aliases())
    };
-   let total = aliases.len() as i64;
+   let total = i64::try_from(aliases.len()).expect("alias count fits in i64");
    render(&Page {
       aliases,
       domains: preview_list(&query, mock_domains()),
@@ -948,6 +958,10 @@ async fn activity_page(
 ) -> Response {
    #[derive(Template)]
    #[template(path = "activity.html")]
+   #[expect(
+      clippy::struct_field_names,
+      reason = "field names mirror the askama template variables"
+   )]
    struct Page {
       alias_address: String,
       activities:    Vec<elq::ActivityForAlias>,
@@ -971,7 +985,10 @@ async fn admin_users_page() -> Response {
    #[template(path = "admin_users.html")]
    struct Page {
       user_email:      String,
-      #[allow(dead_code)]
+      #[expect(
+         dead_code,
+         reason = "read by askama template macro, invisible to rustc"
+      )]
       is_admin:        bool,
       current_user_id: i64,
       users:           Vec<uq::ListAdminCompact>,
@@ -989,7 +1006,10 @@ async fn admin_domains_page(Query(query): Query<PreviewListQuery>) -> Response {
    #[template(path = "admin_domains.html")]
    struct Page {
       user_email: String,
-      #[allow(dead_code)]
+      #[expect(
+         dead_code,
+         reason = "read by askama template macro, invisible to rustc"
+      )]
       is_admin:   bool,
       domains:    Vec<dq::ListAdmin>,
    }
@@ -1022,6 +1042,7 @@ struct PreviewEmailChange {
 }
 
 async fn email_change(Json(body): Json<PreviewEmailChange>) -> Response {
+   use std::str::FromStr as _;
    if body.new_email == "taken@example.com" {
       return (
          StatusCode::CONFLICT,
@@ -1029,7 +1050,6 @@ async fn email_change(Json(body): Json<PreviewEmailChange>) -> Response {
       )
          .into_response();
    }
-   use std::str::FromStr;
    if lettre::Address::from_str(&body.new_email).is_err() {
       return (StatusCode::BAD_REQUEST, "Enter a valid email address.").into_response();
    }
@@ -1052,6 +1072,11 @@ async fn unauthorized() -> (StatusCode, &'static str) {
    (StatusCode::UNAUTHORIZED, "401 unauthorized")
 }
 
+/// Run the auth-less preview server that renders every page with mock data.
+///
+/// # Errors
+///
+/// Returns an error if binding the listener or running the axum server fails.
 pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()> {
    let static_files = ServiceBuilder::new()
       .layer(SetResponseHeaderLayer::overriding(
@@ -1060,57 +1085,69 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
       ))
       .service(ServeDir::new(static_dir));
    let app = Router::new()
-      .route("/login", get(login_page).post(login_post))
-      .route("/signup/{token}", get(signup_page).post(signup_post))
-      .route("/auth/forgot", get(forgot_page).post(forgot_post))
-      .route("/auth/reset/{token}", get(reset_page).post(reset_post))
+      .route("/login", routing::get(login_page).post(login_post))
+      .route(
+         "/signup/{token}",
+         routing::get(signup_page).post(signup_post),
+      )
+      .route("/auth/forgot", routing::get(forgot_page).post(forgot_post))
+      .route(
+         "/auth/reset/{token}",
+         routing::get(reset_page).post(reset_post),
+      )
       .route(
          "/auth/change-email/{token}",
-         get(change_email_page).post(change_email_post),
+         routing::get(change_email_page).post(change_email_post),
       )
       .route(
          "/mailbox/verify/{token}",
-         get(mailbox_verify_page).post(mailbox_verify_post),
+         routing::get(mailbox_verify_page).post(mailbox_verify_post),
       )
-      .route("/setup", get(setup_page).post(setup_post))
-      .route("/", get(aliases_page))
-      .route("/mailboxes", get(mailboxes_page))
-      .route("/domains", get(domains_page))
-      .route("/domains/{id}", get(domain_setup_page))
-      .route("/settings", get(settings_page))
-      .route("/aliases/{id}/contacts", get(contacts_page))
-      .route("/aliases/{id}/activity", get(activity_page))
-      .route("/admin/users", get(admin_users_page))
-      .route("/admin/domains", get(admin_domains_page))
-      .route("/api/v1/user/password", post(password_change))
-      .route("/api/v1/user/email", post(email_change))
-      .route("/api/v1/aliases/{id}", delete(deleted))
-      .route("/api/v1/domain/{id}", delete(deleted))
-      .route("/api/v1/domain", post(domain_created))
-      .route("/api/v1/domain/{id}/check", post(domain_checked))
-      .route("/api/v1/aliases/{id}/toggle", put(updated))
-      .route("/api/v1/mailbox/{id}", patch(updated))
-      .route("/api/v1/mailbox/{id}", delete(deleted))
+      .route("/setup", routing::get(setup_page).post(setup_post))
+      .route("/", routing::get(aliases_page))
+      .route("/mailboxes", routing::get(mailboxes_page))
+      .route("/domains", routing::get(domains_page))
+      .route("/domains/{id}", routing::get(domain_setup_page))
+      .route("/settings", routing::get(settings_page))
+      .route("/aliases/{id}/contacts", routing::get(contacts_page))
+      .route("/aliases/{id}/activity", routing::get(activity_page))
+      .route("/admin/users", routing::get(admin_users_page))
+      .route("/admin/domains", routing::get(admin_domains_page))
+      .route("/api/v1/user/password", routing::post(password_change))
+      .route("/api/v1/user/email", routing::post(email_change))
+      .route("/api/v1/aliases/{id}", routing::delete(deleted))
+      .route("/api/v1/domain/{id}", routing::delete(deleted))
+      .route("/api/v1/domain", routing::post(domain_created))
+      .route("/api/v1/domain/{id}/check", routing::post(domain_checked))
+      .route("/api/v1/aliases/{id}/toggle", routing::put(updated))
+      .route("/api/v1/mailbox/{id}", routing::patch(updated))
+      .route("/api/v1/mailbox/{id}", routing::delete(deleted))
       .route(
          "/api/v1/mailbox/{id}/resend-verify",
-         post(verification_sent),
+         routing::post(verification_sent),
       )
-      .route("/api/v1/contacts/{id}", patch(updated))
-      .route("/api/v1/contacts/{id}", delete(deleted))
-      .route("/api/v1/user/webauthn/credentials/{id}", delete(deleted))
-      .route("/api/v1/admin/domains/{id}/shared", put(updated))
-      .route("/api/v1/admin/users/{id}", patch(updated))
-      .route("/api/v1/admin/users/{id}/enable", put(unauthorized))
-      .route("/healthz", get(healthz))
+      .route("/api/v1/contacts/{id}", routing::patch(updated))
+      .route("/api/v1/contacts/{id}", routing::delete(deleted))
+      .route(
+         "/api/v1/user/webauthn/credentials/{id}",
+         routing::delete(deleted),
+      )
+      .route("/api/v1/admin/domains/{id}/shared", routing::put(updated))
+      .route("/api/v1/admin/users/{id}", routing::patch(updated))
+      .route(
+         "/api/v1/admin/users/{id}/enable",
+         routing::put(unauthorized),
+      )
+      .route("/healthz", routing::get(healthz))
       .nest_service("/static", static_files);
 
-   let listener = tokio::net::TcpListener::bind(listen).await?;
+   let listener = TcpListener::bind(listen).await?;
    tracing::info!(addr = %listen, "preview server listening");
    tracing::warn!("PREVIEW MODE -- no auth, no DB, all data is fake");
 
    axum::serve(listener, app.into_make_service())
       .with_graceful_shutdown(async {
-         let _ = tokio::signal::ctrl_c().await;
+         let _ = signal::ctrl_c().await;
       })
       .await?;
 

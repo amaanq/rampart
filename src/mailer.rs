@@ -2,20 +2,25 @@
 //! (default localhost:465). Test builds can swap in an in-memory
 //! capturer via the Mailer trait.
 
-use std::sync::{
-   Arc,
-   Mutex,
+use std::{
+   fs,
+   mem,
+   sync::{
+      Arc,
+      Mutex,
+   },
 };
 
 use anyhow::{
-   Context,
+   Context as _,
    Result,
 };
 use lettre::{
    AsyncSmtpTransport,
-   AsyncTransport,
+   AsyncTransport as _,
    Message,
    Tokio1Executor,
+   message::header::ContentType,
    transport::smtp::{
       authentication::Credentials,
       client::{
@@ -25,20 +30,32 @@ use lettre::{
    },
 };
 
+use crate::config::Config;
+
 #[async_trait::async_trait]
 pub trait Mailer: Send + Sync {
    async fn send(&self, to: &str, subject: &str, body: &str) -> Result<()>;
 }
 
+#[expect(
+   clippy::module_name_repetitions,
+   reason = "public type name conveys SMTP transport"
+)]
 pub struct SmtpMailer {
    transport: AsyncSmtpTransport<Tokio1Executor>,
    from:      String,
 }
 
 impl SmtpMailer {
-   pub fn from_config(cfg: &crate::config::Config) -> Result<Self> {
-      let password = match &cfg.smtp_password_file {
-         Some(path) => std::fs::read_to_string(path)
+   /// Build an `SmtpMailer` from runtime configuration.
+   ///
+   /// # Errors
+   ///
+   /// Returns an error if the password file cannot be read, TLS parameters
+   /// fail to build, or the SMTP relay cannot be constructed.
+   pub fn from_config(cfg: &Config) -> Result<Self> {
+      let password = match cfg.smtp_password_file.as_ref() {
+         Some(path) => fs::read_to_string(path)
             .with_context(|| format!("reading RAMPART_SMTP_PASSWORD_FILE {}", path.display()))?
             .trim()
             .to_owned(),
@@ -78,7 +95,7 @@ impl Mailer for SmtpMailer {
          .from(self.from.parse()?)
          .to(to.parse()?)
          .subject(subject)
-         .header(lettre::message::header::ContentType::TEXT_PLAIN)
+         .header(ContentType::TEXT_PLAIN)
          .body(body.to_owned())?;
       self.transport.send(msg).await.context("smtp send")?;
       tracing::info!(to, subject, "sent transactional mail");
@@ -94,18 +111,29 @@ pub struct SentEmail {
 }
 
 #[derive(Default)]
+#[expect(
+   clippy::module_name_repetitions,
+   reason = "public type name conveys in-memory mailer"
+)]
 pub struct MemoryMailer {
    pub sent: Arc<Mutex<Vec<SentEmail>>>,
 }
 
 impl MemoryMailer {
+   #[must_use]
    pub fn new() -> Self {
       Self::default()
    }
-   #[allow(dead_code)]
+
+   /// Take and return all captured emails, leaving the buffer empty.
+   ///
+   /// # Panics
+   ///
+   /// Panics if the internal mutex is poisoned.
+   #[must_use]
    pub fn drain(&self) -> Vec<SentEmail> {
-      let mut v = self.sent.lock().unwrap();
-      std::mem::take(&mut *v)
+      let mut sent = self.sent.lock().unwrap();
+      mem::take(&mut *sent)
    }
 }
 

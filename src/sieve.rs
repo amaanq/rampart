@@ -1,10 +1,13 @@
-//! Render the session.rcpt Sieve script from current alias_domain rows.
+//! Render the `session.rcpt` Sieve script from current `alias_domain` rows.
 //! Used by `rampart admin render-sieve` and the domain CRUD handlers.
 
-use std::path::Path;
+use std::{
+   future::Future,
+   path::Path,
+};
 
 use anyhow::{
-   Context,
+   Context as _,
    Result,
 };
 use askama::Template;
@@ -16,13 +19,13 @@ struct SieveRcpt<'a> {
    domains: &'a [String],
 }
 
-pub async fn render_for_domains(domains: &[String]) -> Result<String> {
+pub fn render_for_domains(domains: &[String]) -> Result<String> {
    Ok(SieveRcpt { domains }.render()?)
 }
 
 pub async fn render(client: &tokio_postgres::Client) -> Result<String> {
    let domains = sieve::all_alias_domain_names().bind(client).all().await?;
-   render_for_domains(&domains).await
+   render_for_domains(&domains)
 }
 
 /// Atomically write `bytes` to `path` via temp+rename. Stalwart loads
@@ -32,7 +35,9 @@ pub async fn render(client: &tokio_postgres::Client) -> Result<String> {
 /// when DB snapshot order matters.
 pub fn atomic_write_file(path: &Path, bytes: &[u8]) -> Result<()> {
    use std::{
-      io::Write,
+      fs,
+      io::Write as _,
+      process,
       time::{
          SystemTime,
          UNIX_EPOCH,
@@ -47,30 +52,31 @@ pub fn atomic_write_file(path: &Path, bytes: &[u8]) -> Result<()> {
       .to_string_lossy();
    let nanos = SystemTime::now()
       .duration_since(UNIX_EPOCH)
-      .map(|d| d.as_nanos())
-      .unwrap_or(0);
+      .map_or(0, |dur| dur.as_nanos());
    let suffix: u64 = rand::random();
    let tmp = dir.join(format!(
       ".{file_name}.tmp.{}.{nanos}.{suffix:x}",
-      std::process::id()
+      process::id()
    ));
    let written = (|| -> Result<()> {
-      let mut f =
-         std::fs::File::create(&tmp).with_context(|| format!("create temp {}", tmp.display()))?;
-      f.write_all(bytes)
+      let mut file =
+         fs::File::create(&tmp).with_context(|| format!("create temp {}", tmp.display()))?;
+      file
+         .write_all(bytes)
          .with_context(|| format!("write temp {}", tmp.display()))?;
-      f.sync_all()
+      file
+         .sync_all()
          .with_context(|| format!("fsync temp {}", tmp.display()))?;
       Ok(())
    })();
-   if let Err(e) = written {
-      let _ = std::fs::remove_file(&tmp);
-      return Err(e);
+   if let Err(err) = written {
+      let _ = fs::remove_file(&tmp);
+      return Err(err);
    }
-   if let Err(e) = std::fs::rename(&tmp, path) {
-      let _ = std::fs::remove_file(&tmp);
+   if let Err(err) = fs::rename(&tmp, path) {
+      let _ = fs::remove_file(&tmp);
       return Err(anyhow::anyhow!(
-         "rename {} -> {}: {e}",
+         "rename {} -> {}: {err}",
          tmp.display(),
          path.display()
       ));
@@ -80,7 +86,7 @@ pub fn atomic_write_file(path: &Path, bytes: &[u8]) -> Result<()> {
 
 /// Truncated FNV-1a of `"rampart:sieve_render"`. Any value works; this
 /// just needs to be the same across all renderers.
-pub const SIEVE_RENDER_LOCK_KEY: i64 = 0x534C5F5345565F31;
+pub const SIEVE_RENDER_LOCK_KEY: i64 = 0x534C_5F53_4556_5F31;
 
 /// Render and atomically write under a transaction-scoped advisory
 /// lock. Lock releases on commit, rollback, or dropped connection.
@@ -93,7 +99,7 @@ pub async fn render_and_write_locked(
 
 /// Like `render_and_write_locked` but also runs `sync` while holding
 /// the lock, so the JMAP push and the file write share a snapshot of
-/// alias_domain.
+/// `alias_domain`.
 pub async fn render_write_and_sync_locked<F, Fut>(
    client: &mut tokio_postgres::Client,
    path: &Path,
@@ -101,7 +107,7 @@ pub async fn render_write_and_sync_locked<F, Fut>(
 ) -> Result<()>
 where
    F: FnOnce(Vec<String>, String) -> Fut,
-   Fut: std::future::Future<Output = Result<()>>,
+   Fut: Future<Output = Result<()>>,
 {
    let txn = client
       .transaction()
@@ -118,7 +124,7 @@ where
    .await
    .context("pg_advisory_xact_lock for sieve render")?;
    let domains = sieve::all_alias_domain_names().bind(&txn).all().await?;
-   let rendered = render_for_domains(&domains).await?;
+   let rendered = render_for_domains(&domains)?;
    atomic_write_file(path, rendered.as_bytes())?;
    sync(domains, rendered).await?;
    txn.commit().await.context("commit sieve render txn")?;
@@ -126,36 +132,43 @@ where
 }
 
 #[cfg(test)]
+#[expect(
+   clippy::inline_modules,
+   reason = "small cohesive test submodule kept inline"
+)]
 mod tests {
    use super::render_for_domains;
 
    // Empty domain set must not emit `if anyof ()` — Sieve parses it
    // but the shape is brittle; the internal-LMTP loop guard must
    // still be present.
-   #[tokio::test]
-   async fn empty_domains_no_anyof_block() {
-      let s = render_for_domains(&[]).await.expect("render");
-      assert!(s.contains("internal.rampart.lmtp"), "loop guard missing");
+   #[test]
+   fn empty_domains_no_anyof_block() {
+      let script = render_for_domains(&[]).expect("render");
       assert!(
-         !s.contains("if anyof ("),
+         script.contains("internal.rampart.lmtp"),
+         "loop guard missing"
+      );
+      assert!(
+         !script.contains("if anyof ("),
          "empty domain set must not emit `if anyof (`"
       );
       assert!(
-         !s.contains("rampart_resolve_or_create"),
+         !script.contains("rampart_resolve_or_create"),
          "no managed block, no resolver call"
       );
    }
 
-   #[tokio::test]
-   async fn non_empty_domains_emit_anyof() {
+   #[test]
+   fn non_empty_domains_emit_anyof() {
       let domains = [
          "addy.example.com".to_owned(),
          "alias.example.org".to_owned(),
       ];
-      let s = render_for_domains(&domains).await.expect("render");
-      assert!(s.contains("if anyof ("));
-      assert!(s.contains("addy.example.com"));
-      assert!(s.contains("alias.example.org"));
-      assert!(s.contains("rampart_resolve_or_create"));
+      let script = render_for_domains(&domains).expect("render");
+      assert!(script.contains("if anyof ("));
+      assert!(script.contains("addy.example.com"));
+      assert!(script.contains("alias.example.org"));
+      assert!(script.contains("rampart_resolve_or_create"));
    }
 }

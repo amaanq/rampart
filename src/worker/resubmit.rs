@@ -1,18 +1,23 @@
 //! Resubmit outbound via SMTP AUTH on localhost:465 as rampart-notifier.
 
-use std::sync::{
-   Arc,
-   Mutex,
+use std::{
+   fs,
+   mem,
+   str,
+   sync::{
+      Arc,
+      Mutex,
+   },
 };
 
 use anyhow::{
-   Context,
+   Context as _,
    Result,
 };
 use async_trait::async_trait;
 use lettre::{
    AsyncSmtpTransport,
-   AsyncTransport,
+   AsyncTransport as _,
    Tokio1Executor,
    transport::smtp::{
       authentication::Credentials,
@@ -22,6 +27,8 @@ use lettre::{
       },
    },
 };
+
+use crate::config::Config;
 
 /// Abstract MAIL-FROM/RCPT-TO submit sink. Production: `SubmitClient`
 /// (SMTP AUTH to stalwart). Tests: `MemorySubmit`.
@@ -35,9 +42,14 @@ pub struct SubmitClient {
 }
 
 impl SubmitClient {
-   pub fn from_config(cfg: &crate::config::Config) -> Result<Self> {
-      let password = match &cfg.smtp_password_file {
-         Some(path) => std::fs::read_to_string(path)?.trim().to_owned(),
+   /// Build the SMTP submit transport from the worker's configuration.
+   ///
+   /// # Errors
+   /// Returns an error if the SMTP password file can't be read or the TLS
+   /// parameters / relay transport can't be constructed.
+   pub fn from_config(cfg: &Config) -> Result<Self> {
+      let password = match cfg.smtp_password_file.as_ref() {
+         Some(path) => fs::read_to_string(path)?.trim().to_owned(),
          None => String::new(),
       };
       let is_implicit_tls = cfg.smtp_port == 465;
@@ -84,12 +96,19 @@ pub struct MemorySubmit {
 }
 
 impl MemorySubmit {
+   #[must_use]
    pub fn new() -> Self {
       Self::default()
    }
+
+   /// Take and return all messages recorded so far, in send order.
+   ///
+   /// # Panics
+   /// Panics if the internal mutex is poisoned.
+   #[must_use]
    pub fn drain(&self) -> Vec<SubmittedMessage> {
-      let mut v = self.sent.lock().unwrap();
-      std::mem::take(&mut *v)
+      let mut guard = self.sent.lock().unwrap();
+      mem::take(&mut *guard)
    }
 }
 
@@ -107,32 +126,35 @@ impl Submit for MemorySubmit {
 
 /// Strip CR/LF/NUL/control chars — defeats header injection via a hostile
 /// display name or address.
-fn sanitize_header_value(s: &str) -> String {
-   s.chars()
-      .filter(|c| *c != '\r' && *c != '\n' && *c != '\0' && !c.is_control())
+fn sanitize_header_value(value: &str) -> String {
+   value
+      .chars()
+      .filter(|ch| *ch != '\r' && *ch != '\n' && *ch != '\0' && !ch.is_control())
       .collect()
 }
 
 /// RFC 5322 §3.2.4 quoted-string for display-name. Without this a display
 /// like `Foo\` close-escapes the quote and smuggles the rest of the header.
-pub fn rfc5322_quoted_display(s: &str) -> String {
-   let mut out = String::with_capacity(s.len() + 2);
+#[must_use]
+pub fn rfc5322_quoted_display(value: &str) -> String {
+   let mut out = String::with_capacity(value.len() + 2);
    out.push('"');
-   for c in s.chars() {
-      match c {
-         '\r' | '\n' | '\0' => continue,
-         c if c.is_control() => continue,
+   for ch in value.chars() {
+      match ch {
+         '\r' | '\n' | '\0' => {},
+         _ if ch.is_control() => {},
          '"' | '\\' => {
             out.push('\\');
-            out.push(c);
+            out.push(ch);
          },
-         c => out.push(c),
+         _ => out.push(ch),
       }
    }
    out.push('"');
    out
 }
 
+#[must_use]
 pub fn rewrite_headers(
    raw: &[u8],
    new_from: &str,
@@ -141,11 +163,9 @@ pub fn rewrite_headers(
 ) -> Vec<u8> {
    let new_from = sanitize_header_value(new_from);
    let new_to = sanitize_header_value(new_to);
-   let split = find_header_end(raw);
-   let (headers, body) = match split {
-      Some(i) => (&raw[..i.0], &raw[i.1..]),
-      None => (raw, &[][..]),
-   };
+   let (headers, body) = find_header_end(raw).map_or((raw, &[][..]), |bounds| {
+      (&raw[..bounds.0], &raw[bounds.1..])
+   });
    let mut out_headers: Vec<u8> = Vec::with_capacity(headers.len());
    let mut from_replaced = false;
    let mut to_replaced = false;
@@ -181,10 +201,10 @@ pub fn rewrite_headers(
       }
       if name_lower == "authentication-results" {
          let value = line_value(line);
-         if let Some((authserv, _)) = value.split_once(';') {
-            if authserv.trim().eq_ignore_ascii_case(strip_ar_authserv_id) {
-               continue;
-            }
+         if let Some((authserv, _)) = value.split_once(';')
+            && authserv.trim().eq_ignore_ascii_case(strip_ar_authserv_id)
+         {
+            continue;
          }
       }
       out_headers.extend_from_slice(line);
@@ -208,57 +228,65 @@ pub fn rewrite_headers(
 
 /// Returns (end-of-headers-exclusive, start-of-body).
 fn find_header_end(raw: &[u8]) -> Option<(usize, usize)> {
-   if let Some(i) = find_bytes(raw, b"\r\n\r\n") {
-      return Some((i, i + 4));
+   if let Some(idx) = find_bytes(raw, b"\r\n\r\n") {
+      return Some((idx, idx + 4));
    }
-   if let Some(i) = find_bytes(raw, b"\n\n") {
-      return Some((i, i + 2));
+   if let Some(idx) = find_bytes(raw, b"\n\n") {
+      return Some((idx, idx + 2));
    }
    None
 }
 
 fn find_bytes(hay: &[u8], needle: &[u8]) -> Option<usize> {
-   hay.windows(needle.len()).position(|w| w == needle)
+   hay.windows(needle.len())
+      .position(|window| window == needle)
 }
 
 /// Folded header lines, each including the terminator.
 fn iter_folded_headers(headers: &[u8]) -> Vec<&[u8]> {
    let mut lines = Vec::new();
    let mut start = 0;
-   let mut i = 0;
-   while i < headers.len() {
-      while i < headers.len() {
-         if headers[i] == b'\n' {
-            let next = i + 1;
+   let mut idx = 0;
+   while idx < headers.len() {
+      while idx < headers.len() {
+         if headers[idx] == b'\n' {
+            let next = idx + 1;
             if next < headers.len() && (headers[next] == b' ' || headers[next] == b'\t') {
-               i = next;
+               idx = next;
                continue;
             }
-            i = next;
+            idx = next;
             break;
          }
-         i += 1;
+         idx += 1;
       }
-      lines.push(&headers[start..i]);
-      start = i;
+      lines.push(&headers[start..idx]);
+      start = idx;
    }
    lines
 }
 
 fn line_name_lower(line: &[u8]) -> String {
-   let end = line.iter().position(|b| *b == b':').unwrap_or(line.len());
-   std::str::from_utf8(&line[..end])
+   let end = line
+      .iter()
+      .position(|byte| *byte == b':')
+      .unwrap_or(line.len());
+   str::from_utf8(&line[..end])
       .unwrap_or("")
       .trim()
       .to_ascii_lowercase()
 }
 
 fn line_value(line: &[u8]) -> &str {
-   let colon = line.iter().position(|b| *b == b':').unwrap_or(line.len());
-   std::str::from_utf8(&line[colon + 1..]).unwrap_or("").trim()
+   let colon = line
+      .iter()
+      .position(|byte| *byte == b':')
+      .unwrap_or(line.len());
+   str::from_utf8(&line[colon + 1..]).unwrap_or("").trim()
 }
 
 #[cfg(test)]
+#[expect(clippy::inline_modules, reason = "unit tests kept beside impl")]
 mod tests {
    use super::*;
 
@@ -266,10 +294,10 @@ mod tests {
    fn replaces_from_preserves_body() {
       let raw = b"From: old@x.com\r\nSubject: hi\r\nDate: now\r\n\r\nbody bytes\r\nmore";
       let out = rewrite_headers(raw, "new@y.com", "alias@addy.test", "mail.test");
-      let s = std::str::from_utf8(&out).unwrap();
-      assert!(s.contains("From: new@y.com\r\n"));
-      assert!(!s.contains("From: old@x.com"));
-      assert!(s.ends_with("body bytes\r\nmore"));
+      let out_str = str::from_utf8(&out).unwrap();
+      assert!(out_str.contains("From: new@y.com\r\n"));
+      assert!(!out_str.contains("From: old@x.com"));
+      assert!(out_str.ends_with("body bytes\r\nmore"));
    }
 
    #[test]
@@ -280,9 +308,9 @@ mod tests {
                     \r\n\
                     body";
       let out = rewrite_headers(raw, "new@y.com", "alias@addy.test", "mail.test");
-      let s = std::str::from_utf8(&out).unwrap();
-      assert!(!s.contains("mail.test; dmarc=pass"));
-      assert!(s.contains("upstream.example; dmarc=fail"));
+      let out_str = str::from_utf8(&out).unwrap();
+      assert!(!out_str.contains("mail.test; dmarc=pass"));
+      assert!(out_str.contains("upstream.example; dmarc=fail"));
    }
 
    #[test]
@@ -290,13 +318,16 @@ mod tests {
       let raw = b"From: evil@x\r\nSubject: original\r\n\r\nbody";
       let evil = "inject\r\nBcc: attacker@evil.test <x@y>";
       let out = rewrite_headers(raw, evil, "alias@addy.test", "mail.test");
-      let s = std::str::from_utf8(&out).unwrap();
+      let out_str = str::from_utf8(&out).unwrap();
       assert!(
-         !s.contains("\r\nBcc:"),
-         "CRLF-prefixed injection leaked: {s:?}"
+         !out_str.contains("\r\nBcc:"),
+         "CRLF-prefixed injection leaked: {out_str:?}"
       );
-      let from_lines: Vec<&str> = s.split("\r\n").filter(|l| l.starts_with("From:")).collect();
-      assert_eq!(from_lines.len(), 1, "exactly one From: header expected");
+      let from_count = out_str
+         .split("\r\n")
+         .filter(|line| line.starts_with("From:"))
+         .count();
+      assert_eq!(from_count, 1, "exactly one From: header expected");
    }
 
    #[test]
@@ -315,8 +346,8 @@ mod tests {
    fn preserves_inbound_dkim() {
       let raw = b"DKIM-Signature: v=1; a=rsa-sha256; d=gmail.com; ...\r\nFrom: a@gmail\r\n\r\nbody";
       let out = rewrite_headers(raw, "ra+tok@addy.test", "alias@addy.test", "mail.test");
-      let s = std::str::from_utf8(&out).unwrap();
-      assert!(s.contains("DKIM-Signature: v=1"));
+      let out_str = str::from_utf8(&out).unwrap();
+      assert!(out_str.contains("DKIM-Signature: v=1"));
    }
 
    #[test]
@@ -329,18 +360,18 @@ mod tests {
                     \r\n\
                     body";
       let out = rewrite_headers(raw, "ra+tok@addy.test", "alias@addy.test", "mail.test");
-      let s = std::str::from_utf8(&out).unwrap();
-      assert!(!s.contains("Reply-To:"), "Reply-To must be stripped");
-      assert!(!s.contains("Cc:"), "Cc must be stripped");
+      let out_str = str::from_utf8(&out).unwrap();
+      assert!(!out_str.contains("Reply-To:"), "Reply-To must be stripped");
+      assert!(!out_str.contains("Cc:"), "Cc must be stripped");
       assert!(
-         !s.contains("leaked@third.test"),
+         !out_str.contains("leaked@third.test"),
          "extra To recipient leaked"
       );
-      assert!(!s.contains("cc1@elsewhere"));
-      assert!(!s.contains("cc2@elsewhere"));
-      assert!(s.contains("To: alias@addy.test\r\n"));
-      assert!(s.contains("From: ra+tok@addy.test\r\n"));
-      assert!(!s.contains("From: sender@external"));
+      assert!(!out_str.contains("cc1@elsewhere"));
+      assert!(!out_str.contains("cc2@elsewhere"));
+      assert!(out_str.contains("To: alias@addy.test\r\n"));
+      assert!(out_str.contains("From: ra+tok@addy.test\r\n"));
+      assert!(!out_str.contains("From: sender@external"));
    }
 
    #[test]
@@ -348,11 +379,11 @@ mod tests {
       let raw =
          b"From: x@x\r\nREPLY-TO: bypass@evil\r\nCC: cc@elsewhere\r\nto: orig@addy\r\n\r\nbody";
       let out = rewrite_headers(raw, "new@y", "alias@addy.test", "mail.test");
-      let s = std::str::from_utf8(&out).unwrap();
-      assert!(!s.to_lowercase().contains("reply-to:"));
-      assert!(!s.to_lowercase().contains("cc:"));
-      assert!(!s.contains("orig@addy"));
-      assert!(s.contains("To: alias@addy.test"));
+      let out_str = str::from_utf8(&out).unwrap();
+      assert!(!out_str.to_lowercase().contains("reply-to:"));
+      assert!(!out_str.to_lowercase().contains("cc:"));
+      assert!(!out_str.contains("orig@addy"));
+      assert!(out_str.contains("To: alias@addy.test"));
    }
 
    #[test]
@@ -373,7 +404,7 @@ mod tests {
                     \r\n\
                     body";
       let out = rewrite_headers(raw, "ra+tok@addy.test", "alias@addy.test", "mail.test");
-      let s = std::str::from_utf8(&out).unwrap();
+      let out_str = str::from_utf8(&out).unwrap();
       for needle in [
          "Sender:",
          "Bcc:",
@@ -387,7 +418,10 @@ mod tests {
          "resent@elsewhere",
          "list-unsub@list.test",
       ] {
-         assert!(!s.contains(needle), "{needle:?} survived rewrite: {s:?}");
+         assert!(
+            !out_str.contains(needle),
+            "{needle:?} survived rewrite: {out_str:?}"
+         );
       }
    }
 
@@ -395,8 +429,11 @@ mod tests {
    fn missing_to_synthesizes_one() {
       let raw = b"From: x@x\r\nSubject: hi\r\n\r\nbody";
       let out = rewrite_headers(raw, "new@y", "alias@addy.test", "mail.test");
-      let s = std::str::from_utf8(&out).unwrap();
-      let to_lines: Vec<&str> = s.split("\r\n").filter(|l| l.starts_with("To:")).collect();
+      let out_str = str::from_utf8(&out).unwrap();
+      let to_lines: Vec<&str> = out_str
+         .split("\r\n")
+         .filter(|line| line.starts_with("To:"))
+         .collect();
       assert_eq!(to_lines.len(), 1);
       assert_eq!(to_lines[0], "To: alias@addy.test");
    }

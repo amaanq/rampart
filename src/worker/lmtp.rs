@@ -2,6 +2,8 @@
 //! after DATA. Per-RCPT verdicts come from the pipeline.
 
 use std::{
+   future::Future,
+   io,
    sync::Arc,
    time::Duration,
 };
@@ -12,11 +14,13 @@ use tokio::{
       AsyncRead,
       AsyncReadExt,
       AsyncWrite,
-      AsyncWriteExt,
+      AsyncWriteExt as _,
       BufReader,
    },
    net::TcpListener,
+   signal,
    task::JoinSet,
+   time,
 };
 
 use crate::worker::{
@@ -31,11 +35,15 @@ pub const INTERNAL_DOMAIN: &str = "internal.rampart.lmtp";
 pub const MAX_MESSAGE_SIZE: usize = 50 * 1024 * 1024; // 50 MiB
 pub const MAX_LINE_LEN: usize = 64 * 1024;
 
+/// Bind the configured LMTP address and serve until shutdown.
+///
+/// # Errors
+/// Returns an error if the listen address can't be bound.
 pub async fn serve(state: WorkerState) -> Result<()> {
    let addr = state.config.lmtp_listen;
    let listener = TcpListener::bind(addr).await?;
    tracing::info!(%addr, "rampart-worker LMTP listening");
-   let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
+   let _ = sd_notify::notify(&[sd_notify::NotifyState::Ready]);
 
    let drain_timeout = Duration::from_secs(state.config.lmtp_drain_secs);
    let handler: Arc<dyn DeliveryHandler> = Arc::new(PipelineHandler);
@@ -43,6 +51,9 @@ pub async fn serve(state: WorkerState) -> Result<()> {
 }
 
 /// Test-friendly entry — caller supplies listener + handler + shutdown future.
+///
+/// # Errors
+/// Returns an error if accepting an inbound connection fails.
 pub async fn serve_with_listener<S>(
    state: WorkerState,
    listener: TcpListener,
@@ -51,55 +62,55 @@ pub async fn serve_with_listener<S>(
    drain_timeout: Duration,
 ) -> Result<()>
 where
-   S: std::future::Future<Output = ()> + Send,
+   S: Future<Output = ()> + Send,
 {
-   let mut handles: JoinSet<()> = JoinSet::new();
+   let mut sessions: JoinSet<()> = JoinSet::new();
    let mut shutdown = std::pin::pin!(shutdown);
 
    loop {
       tokio::select! {
           biased;
-          _ = &mut shutdown => break,
+          () = &mut shutdown => break,
           accepted = listener.accept() => {
               let (sock, peer) = accepted?;
               let st = state.clone();
-              let h = handler.clone();
-              handles.spawn(async move {
-                  let (r, w) = sock.into_split();
-                  if let Err(e) =
-                      handle_session_io(st, BufReader::new(r), w, h.as_ref()).await
+              let handler = Arc::clone(&handler);
+              sessions.spawn(async move {
+                  let (read_half, write_half) = sock.into_split();
+                  if let Err(err) =
+                      handle_session_io(st, BufReader::new(read_half), write_half, handler.as_ref()).await
                   {
-                      tracing::error!(error = ?e, ?peer, "lmtp session ended with error");
+                      tracing::error!(error = ?err, ?peer, "lmtp session ended with error");
                   }
               });
           }
       }
       // Reap to keep the JoinSet bounded.
-      while handles.try_join_next().is_some() {}
+      while sessions.try_join_next().is_some() {}
    }
 
-   let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Stopping]);
+   let _ = sd_notify::notify(&[sd_notify::NotifyState::Stopping]);
    drop(listener);
-   tracing::info!(in_flight = handles.len(), "draining lmtp sessions");
+   tracing::info!(in_flight = sessions.len(), "draining lmtp sessions");
 
-   let drain = tokio::time::timeout(drain_timeout, async {
-      while handles.join_next().await.is_some() {}
+   let drain = time::timeout(drain_timeout, async {
+      while sessions.join_next().await.is_some() {}
    })
    .await;
    if drain.is_err() {
       tracing::warn!(
-         remaining = handles.len(),
+         remaining = sessions.len(),
          "drain timeout; aborting sessions"
       );
-      handles.abort_all();
-      while handles.join_next().await.is_some() {}
+      sessions.abort_all();
+      while sessions.join_next().await.is_some() {}
    }
    Ok(())
 }
 
 async fn shutdown_signal() {
    let ctrl_c = async {
-      let _ = tokio::signal::ctrl_c().await;
+      let _ = signal::ctrl_c().await;
    };
    #[cfg(unix)]
    let term = async {
@@ -107,17 +118,28 @@ async fn shutdown_signal() {
          SignalKind,
          signal,
       };
-      let mut s = signal(SignalKind::terminate()).expect("install SIGTERM");
-      s.recv().await;
+      let mut sigterm = signal(SignalKind::terminate()).expect("install SIGTERM");
+      sigterm.recv().await;
    };
    #[cfg(not(unix))]
    let term = std::future::pending::<()>();
 
-   tokio::select! { _ = ctrl_c => {}, _ = term => {} }
+   tokio::select! { () = ctrl_c => {}, () = term => {} }
 }
 
 /// Generic over r/w halves with a `DeliveryHandler` trait object so
 /// DB-free state-machine tests can drive LMTP with a mock.
+///
+/// # Errors
+/// Returns an error if reading from or writing to the socket fails.
+///
+/// # Panics
+/// Panics if a queued RCPT is processed while `mail_from` is unset; the
+/// DATA branch guarantees `mail_from` is present before draining recipients.
+#[expect(
+   clippy::cognitive_complexity,
+   reason = "LMTP command state machine reads clearest as one flat loop"
+)]
 pub async fn handle_session_io<R, W>(
    state: WorkerState,
    mut reader: BufReader<R>,
@@ -135,8 +157,8 @@ where
    let mut line_buf: Vec<u8> = Vec::with_capacity(256);
 
    loop {
-      let n = read_line_bytes(&mut reader, &mut line_buf, MAX_LINE_LEN).await?;
-      if n == 0 {
+      let read_len = read_line_bytes(&mut reader, &mut line_buf, MAX_LINE_LEN).await?;
+      if read_len == 0 {
          break;
       }
       // Lossy-decode so non-UTF-8 doesn't panic the session.
@@ -154,8 +176,8 @@ where
       } else if upper.starts_with("RCPT TO:") {
          let addr = parse_address_arg(trimmed);
          match loop_guard::parse_rcpt(&addr, INTERNAL_DOMAIN) {
-            Some(r) => {
-               rcpts.push(r);
+            Some(rcpt) => {
+               rcpts.push(rcpt);
                w.write_all(b"250 OK\r\n").await?;
             },
             None => {
@@ -176,20 +198,20 @@ where
          let mut saw_terminator = false;
          loop {
             let mut raw = Vec::with_capacity(1024);
-            let n = read_line_bytes(&mut reader, &mut raw, MAX_LINE_LEN).await?;
-            if n == 0 {
+            let data_len = read_line_bytes(&mut reader, &mut raw, MAX_LINE_LEN).await?;
+            if data_len == 0 {
                break;
             }
-            let line = raw.as_slice();
-            let is_terminator = line == b".\r\n" || line == b".\n" || line == b".";
+            let chunk = raw.as_slice();
+            let is_terminator = chunk == b".\r\n" || chunk == b".\n" || chunk == b".";
             if is_terminator {
                saw_terminator = true;
                break;
             }
-            let slice = if line.starts_with(b"..") {
-               &line[1..]
+            let slice = if chunk.starts_with(b"..") {
+               &chunk[1..]
             } else {
-               line
+               chunk
             };
             if body.len() + slice.len() > MAX_MESSAGE_SIZE {
                too_big = true;
@@ -218,13 +240,17 @@ where
             mail_from = None;
             continue;
          }
+         #[expect(
+            clippy::iter_with_drain,
+            reason = "rcpts Vec is reused across sessions; drain keeps the allocation"
+         )]
          for rcpt in rcpts.drain(..) {
-            let d = pipeline::Delivery {
+            let delivery = pipeline::Delivery {
                rcpt,
                mail_from: mail_from.clone().unwrap(),
                raw: body.clone(),
             };
-            let verdict = handler.handle(&state, d).await;
+            let verdict = handler.handle(&state, delivery).await;
             let reply = match verdict {
                pipeline::Verdict::Delivered => b"250 2.0.0 OK\r\n".to_vec(),
                pipeline::Verdict::Perm { internal, smtp } => {
@@ -249,7 +275,7 @@ where
          w.write_all(b"221 Bye\r\n").await?;
          break;
       } else if upper.is_empty() {
-         continue;
+         // Blank line between commands; nothing to do.
       } else {
          w.write_all(b"500 5.5.2 Unknown command\r\n").await?;
       }
@@ -259,9 +285,9 @@ where
 
 /// Strip "MAIL FROM:" / "RCPT TO:" framing and any trailing ESMTP params.
 fn parse_address_arg(line: &str) -> String {
-   let after = line.split_once(':').map(|(_, r)| r).unwrap_or(line);
+   let after = line.split_once(':').map_or(line, |(_, rest)| rest);
    let after = after.trim();
-   let start = after.find('<').map(|i| i + 1).unwrap_or(0);
+   let start = after.find('<').map_or(0, |idx| idx + 1);
    let end = after.find('>').unwrap_or(after.len());
    if end >= start {
       after[start..end].to_owned()
@@ -272,16 +298,19 @@ fn parse_address_arg(line: &str) -> String {
 
 /// One SMTP line (incl. trailing CRLF/LF) into `buf`; 0 on EOF.
 /// Errors if longer than `max` (RFC 5321 caps at 1000 bytes; we allow 64 KiB).
-async fn read_line_bytes<R: AsyncReadExt + Unpin>(
+async fn read_line_bytes<R>(
    reader: &mut BufReader<R>,
    buf: &mut Vec<u8>,
    max: usize,
-) -> std::io::Result<usize> {
+) -> io::Result<usize>
+where
+   R: AsyncReadExt + Unpin,
+{
    buf.clear();
    loop {
-      let mut byte = [0u8; 1];
-      let n = reader.read(&mut byte).await?;
-      if n == 0 {
+      let mut byte = [0_u8; 1];
+      let read_len = reader.read(&mut byte).await?;
+      if read_len == 0 {
          return Ok(buf.len());
       }
       buf.push(byte[0]);
@@ -289,10 +318,7 @@ async fn read_line_bytes<R: AsyncReadExt + Unpin>(
          return Ok(buf.len());
       }
       if buf.len() >= max {
-         return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "line too long",
-         ));
+         return Err(io::Error::new(io::ErrorKind::InvalidData, "line too long"));
       }
    }
 }

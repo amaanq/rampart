@@ -2,12 +2,14 @@
 //! `RAMPART_*` variable each one reads.
 
 use std::{
+   env,
+   fs,
    net::SocketAddr,
    path::PathBuf,
 };
 
 use anyhow::{
-   Context,
+   Context as _,
    Result,
 };
 
@@ -41,11 +43,18 @@ pub struct Config {
    pub stalwart_admin_password_file: Option<PathBuf>,
 
    /// HMAC-SHA256 key for bounce VERP signing — without it, any internet
-   /// host could forge VERPs that mutate email_log rows.
+   /// host could forge VERPs that mutate `email_log` rows.
    pub verp_key: Vec<u8>,
 }
 
 impl Config {
+   /// Load configuration from the process environment.
+   ///
+   /// # Errors
+   ///
+   /// Returns an error if a required `RAMPART_*` variable is missing or
+   /// malformed, the origin fails normalization, or the VERP key file is
+   /// absent or shorter than 32 bytes.
    pub fn from_env() -> Result<Self> {
       let database_url = env("RAMPART_DATABASE_URL").or_else(|_| env("DATABASE_URL"))?;
       let listen: SocketAddr = env_or("RAMPART_LISTEN", "[::1]:8090")
@@ -54,7 +63,7 @@ impl Config {
       let public_origin = normalize_origin(&env("RAMPART_PUBLIC_ORIGIN")?)?;
       let host_from_origin = host_from_origin(&public_origin);
       let static_dir = PathBuf::from(env_or("RAMPART_STATIC_DIR", "static"));
-      let sieve_output_path = std::env::var("RAMPART_SIEVE_OUTPUT_PATH")
+      let sieve_output_path = env::var("RAMPART_SIEVE_OUTPUT_PATH")
          .ok()
          .map(PathBuf::from);
 
@@ -64,14 +73,14 @@ impl Config {
          .context("parsing RAMPART_SMTP_PORT")?;
       let smtp_user = env_or(
          "RAMPART_SMTP_USER",
-         &format!("rampart-notifier@{}", &host_from_origin),
+         &format!("rampart-notifier@{host_from_origin}"),
       );
-      let smtp_password_file = std::env::var("RAMPART_SMTP_PASSWORD_FILE")
+      let smtp_password_file = env::var("RAMPART_SMTP_PASSWORD_FILE")
          .ok()
          .map(PathBuf::from);
       let notifier_from = env_or(
          "RAMPART_NOTIFIER_FROM",
-         &format!("\"rampart\" <{}>", &smtp_user),
+         &format!("\"rampart\" <{smtp_user}>"),
       );
 
       let webauthn_rp_id = env_or("RAMPART_WEBAUTHN_RP_ID", &host_from_origin);
@@ -87,23 +96,23 @@ impl Config {
          .parse()
          .context("parsing RAMPART_LMTP_DRAIN_SECS")?;
 
-      let stalwart_jmap_base_url = std::env::var("RAMPART_STALWART_JMAP_BASE_URL").ok();
+      let stalwart_jmap_base_url = env::var("RAMPART_STALWART_JMAP_BASE_URL").ok();
       let stalwart_admin_username = env_or("RAMPART_STALWART_ADMIN_USERNAME", "admin");
-      let stalwart_admin_password_file = std::env::var("RAMPART_STALWART_ADMIN_PASSWORD_FILE")
+      let stalwart_admin_password_file = env::var("RAMPART_STALWART_ADMIN_PASSWORD_FILE")
          .ok()
          .map(PathBuf::from);
 
       // Trim trailing whitespace so `openssl rand -base64 32 > /tmp/k`
       // works without surprises; reject <32B (brute-able offline).
       let verp_key = {
-         let path = std::env::var("RAMPART_VERP_KEY_FILE")
+         let path = env::var("RAMPART_VERP_KEY_FILE")
             .context("env RAMPART_VERP_KEY_FILE must be set (path to >=32-byte HMAC key)")?;
-         let raw = std::fs::read(&path)
-            .with_context(|| format!("reading RAMPART_VERP_KEY_FILE='{path}'"))?;
+         let raw =
+            fs::read(&path).with_context(|| format!("reading RAMPART_VERP_KEY_FILE='{path}'"))?;
          let trimmed: Vec<u8> = raw
             .into_iter()
             .rev()
-            .skip_while(|b| matches!(*b, b'\n' | b'\r' | b' ' | b'\t'))
+            .skip_while(|byte| matches!(*byte, b'\n' | b'\r' | b' ' | b'\t'))
             .collect::<Vec<_>>()
             .into_iter()
             .rev()
@@ -142,17 +151,17 @@ impl Config {
 }
 
 fn env(name: &str) -> Result<String> {
-   std::env::var(name).with_context(|| format!("env {name} must be set"))
+   env::var(name).with_context(|| format!("env {name} must be set"))
 }
 
 fn env_or(name: &str, default: &str) -> String {
-   std::env::var(name).unwrap_or_else(|_| default.to_owned())
+   env::var(name).unwrap_or_else(|_| default.to_owned())
 }
 
 fn host_from_origin(origin: &str) -> String {
    url::Url::parse(origin)
       .ok()
-      .and_then(|u| u.host_str().map(|h| h.to_owned()))
+      .and_then(|url| url.host_str().map(str::to_owned))
       .unwrap_or_else(|| "localhost".to_owned())
 }
 
@@ -184,14 +193,18 @@ fn normalize_origin(raw: &str) -> Result<String> {
       anyhow::bail!("RAMPART_PUBLIC_ORIGIN must not contain a query or fragment");
    }
    let default_port = if scheme == "https" { 443 } else { 80 };
-   let port = url.port().filter(|p| *p != default_port);
-   Ok(match port {
-      Some(p) => format!("{scheme}://{host}:{p}"),
-      None => format!("{scheme}://{host}"),
-   })
+   let port = url.port().filter(|candidate| *candidate != default_port);
+   Ok(port.map_or_else(
+      || format!("{scheme}://{host}"),
+      |port_num| format!("{scheme}://{host}:{port_num}"),
+   ))
 }
 
 #[cfg(test)]
+#[expect(
+   clippy::inline_modules,
+   reason = "small cohesive test submodule kept inline"
+)]
 mod tests {
    use super::normalize_origin;
 
@@ -233,14 +246,14 @@ mod tests {
 
    #[test]
    fn rejects_path_query_userinfo() {
-      assert!(normalize_origin("https://rampart.example.com/foo").is_err());
-      assert!(normalize_origin("https://rampart.example.com/?x=y").is_err());
-      assert!(normalize_origin("https://user@rampart.example.com").is_err());
+      normalize_origin("https://rampart.example.com/foo").unwrap_err();
+      normalize_origin("https://rampart.example.com/?x=y").unwrap_err();
+      normalize_origin("https://user@rampart.example.com").unwrap_err();
    }
 
    #[test]
    fn rejects_non_http_scheme() {
-      assert!(normalize_origin("ftp://rampart.example.com").is_err());
-      assert!(normalize_origin("javascript:alert(1)").is_err());
+      normalize_origin("ftp://rampart.example.com").unwrap_err();
+      normalize_origin("javascript:alert(1)").unwrap_err();
    }
 }

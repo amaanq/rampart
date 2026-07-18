@@ -13,10 +13,10 @@ use axum::{
    middleware,
    response::{
       Html,
-      IntoResponse,
+      IntoResponse as _,
       Response,
    },
-   routing::get,
+   routing,
 };
 use rampart_codegen::queries::{
    aliases,
@@ -53,18 +53,18 @@ use crate::{
 
 pub fn router() -> Router<AppState> {
    let admin_routes = Router::new()
-      .route("/admin/users", get(admin_users_page))
-      .route("/admin/domains", get(admin_domains_page))
+      .route("/admin/users", routing::get(admin_users_page))
+      .route("/admin/domains", routing::get(admin_domains_page))
       .layer(middleware::from_fn(auth::admin_layer));
 
    Router::new()
-      .route("/", get(aliases_page))
-      .route("/mailboxes", get(mailboxes_page))
-      .route("/domains", get(domains_page))
-      .route("/domains/{id}", get(domain_setup_page))
-      .route("/settings", get(settings_page))
-      .route("/aliases/{id}/contacts", get(contacts_page))
-      .route("/aliases/{id}/activity", get(activity_page))
+      .route("/", routing::get(aliases_page))
+      .route("/mailboxes", routing::get(mailboxes_page))
+      .route("/domains", routing::get(domains_page))
+      .route("/domains/{id}", routing::get(domain_setup_page))
+      .route("/settings", routing::get(settings_page))
+      .route("/aliases/{id}/contacts", routing::get(contacts_page))
+      .route("/aliases/{id}/activity", routing::get(activity_page))
       .merge(admin_routes)
 }
 
@@ -121,11 +121,11 @@ struct AliasesPage {
 
 async fn aliases_page(
    State(state): State<AppState>,
-   Extension(p): Extension<Principal>,
+   Extension(principal): Extension<Principal>,
 ) -> ApiResult<Response> {
-   let c = state.pool.get().await?;
+   let conn = state.pool.get().await?;
    let aliases: Vec<AliasRowView> = aliases::list_for_dashboard()
-      .bind(&c, &p.user_id)
+      .bind(&conn, &principal.user_id)
       .all()
       .await?
       .into_iter()
@@ -146,10 +146,10 @@ async fn aliases_page(
          last_email_at: row.last_email_at,
       })
       .collect();
-   let total = aliases.len() as i64;
+   let total = i64::try_from(aliases.len()).expect("alias count fits in i64");
 
    let domains: Vec<DomainRowView> = domains::list_for_dashboard()
-      .bind(&c, &p.user_id, &p.is_admin)
+      .bind(&conn, &principal.user_id, &principal.is_admin)
       .all()
       .await?
       .into_iter()
@@ -157,7 +157,7 @@ async fn aliases_page(
          id:            row.id,
          domain:        row.domain.clone(),
          shared:        row.shared,
-         mine:          row.owner_id == Some(p.user_id),
+         mine:          row.owner_id == Some(principal.user_id),
          random_prefix: row.random_prefix,
          reply_prefix:  row.reply_prefix,
          nb_alias:      row.nb_alias,
@@ -175,21 +175,21 @@ async fn aliases_page(
       })
       .collect();
    let has_verified_mailbox = mailboxes::first_verified_for_user()
-      .bind(&c, &p.user_id)
+      .bind(&conn, &principal.user_id)
       .opt()
       .await?
       .is_some();
 
-   let user_email = lookup_user_email(&c, p.user_id).await?;
+   let user_email = lookup_user_email(&conn, principal.user_id).await?;
 
-   Ok(render(&AliasesPage {
+   render(&AliasesPage {
       aliases,
       domains,
       has_verified_mailbox,
       total,
       user_email,
-      is_admin: p.is_admin,
-   })?)
+      is_admin: principal.is_admin,
+   })
 }
 
 #[derive(Template)]
@@ -202,19 +202,19 @@ struct MailboxesPage {
 
 async fn mailboxes_page(
    State(state): State<AppState>,
-   Extension(p): Extension<Principal>,
+   Extension(principal): Extension<Principal>,
 ) -> ApiResult<Response> {
-   let c = state.pool.get().await?;
+   let conn = state.pool.get().await?;
    let mailboxes = mailboxes::list_for_user()
-      .bind(&c, &p.user_id)
+      .bind(&conn, &principal.user_id)
       .all()
       .await?;
-   let user_email = lookup_user_email(&c, p.user_id).await?;
-   Ok(render(&MailboxesPage {
+   let user_email = lookup_user_email(&conn, principal.user_id).await?;
+   render(&MailboxesPage {
       mailboxes,
       user_email,
-      is_admin: p.is_admin,
-   })?)
+      is_admin: principal.is_admin,
+   })
 }
 
 #[derive(Template)]
@@ -227,11 +227,11 @@ struct DomainsPage {
 
 async fn domains_page(
    State(state): State<AppState>,
-   Extension(p): Extension<Principal>,
+   Extension(principal): Extension<Principal>,
 ) -> ApiResult<Response> {
-   let c = state.pool.get().await?;
+   let conn = state.pool.get().await?;
    let domains: Vec<DomainRowView> = domains::list_for_dashboard()
-      .bind(&c, &p.user_id, &p.is_admin)
+      .bind(&conn, &principal.user_id, &principal.is_admin)
       .all()
       .await?
       .into_iter()
@@ -239,7 +239,7 @@ async fn domains_page(
          id:            row.id,
          domain:        row.domain.clone(),
          shared:        row.shared,
-         mine:          row.owner_id == Some(p.user_id),
+         mine:          row.owner_id == Some(principal.user_id),
          random_prefix: row.random_prefix,
          reply_prefix:  row.reply_prefix,
          nb_alias:      row.nb_alias,
@@ -256,12 +256,12 @@ async fn domains_page(
          .to_owned(),
       })
       .collect();
-   let user_email = lookup_user_email(&c, p.user_id).await?;
-   Ok(render(&DomainsPage {
+   let user_email = lookup_user_email(&conn, principal.user_id).await?;
+   render(&DomainsPage {
       domains,
       user_email,
-      is_admin: p.is_admin,
-   })?)
+      is_admin: principal.is_admin,
+   })
 }
 
 #[derive(Template)]
@@ -274,12 +274,12 @@ struct DomainSetupPage {
 
 async fn domain_setup_page(
    State(state): State<AppState>,
-   Extension(p): Extension<Principal>,
+   Extension(principal): Extension<Principal>,
    Path(domain_id): Path<i64>,
 ) -> ApiResult<Response> {
-   let c = state.pool.get().await?;
+   let conn = state.pool.get().await?;
    let row = domains::by_id_for_user()
-      .bind(&c, &domain_id, &p.user_id, &p.is_admin)
+      .bind(&conn, &domain_id, &principal.user_id, &principal.is_admin)
       .opt()
       .await?
       .ok_or(ApiError::NotFound)?;
@@ -292,21 +292,24 @@ async fn domain_setup_page(
       row.dns_checked_at,
       row.dns_verified_at,
    );
-   let user_email = lookup_user_email(&c, p.user_id).await?;
-   Ok(render(&DomainSetupPage {
+   let user_email = lookup_user_email(&conn, principal.user_id).await?;
+   render(&DomainSetupPage {
       setup,
       user_email,
-      is_admin: p.is_admin,
-   })?)
+      is_admin: principal.is_admin,
+   })
 }
 
-fn render<T: Template>(t: &T) -> Result<Response, crate::error::ApiError> {
-   let body = t.render()?;
+fn render<T>(template: &T) -> Result<Response, ApiError>
+where
+   T: Template,
+{
+   let body = template.render()?;
    Ok((StatusCode::OK, Html(body)).into_response())
 }
 
-async fn lookup_user_email(c: &deadpool_postgres::Client, user_id: i64) -> ApiResult<String> {
-   Ok(users::email_by_id().bind(c, &user_id).one().await?)
+async fn lookup_user_email(conn: &deadpool_postgres::Client, user_id: i64) -> ApiResult<String> {
+   Ok(users::email_by_id().bind(conn, &user_id).one().await?)
 }
 
 #[derive(Template)]
@@ -319,16 +322,19 @@ struct SettingsPage {
 
 async fn settings_page(
    State(state): State<AppState>,
-   Extension(p): Extension<Principal>,
+   Extension(principal): Extension<Principal>,
 ) -> ApiResult<Response> {
-   let c = state.pool.get().await?;
-   let user_email = lookup_user_email(&c, p.user_id).await?;
-   let passkeys = webauthn::list_for_user().bind(&c, &p.user_id).all().await?;
-   Ok(render(&SettingsPage {
+   let conn = state.pool.get().await?;
+   let user_email = lookup_user_email(&conn, principal.user_id).await?;
+   let passkeys = webauthn::list_for_user()
+      .bind(&conn, &principal.user_id)
+      .all()
+      .await?;
+   render(&SettingsPage {
       user_email,
-      is_admin: p.is_admin,
+      is_admin: principal.is_admin,
       passkeys,
-   })?)
+   })
 }
 
 #[derive(Template)]
@@ -337,7 +343,10 @@ struct AdminUsersPage {
    user_email:      String,
    /// Read by askama in `{% if is_admin %}` template blocks; rustc
    /// can't see through the macro so the field looks dead-coded.
-   #[allow(dead_code)]
+   #[expect(
+      dead_code,
+      reason = "read by askama template macro, invisible to rustc"
+   )]
    is_admin:        bool,
    current_user_id: i64,
    users:           Vec<AdminUserRowView>,
@@ -345,25 +354,28 @@ struct AdminUsersPage {
 
 async fn admin_users_page(
    State(state): State<AppState>,
-   AdminPrincipal(p): AdminPrincipal,
+   AdminPrincipal(principal): AdminPrincipal,
 ) -> ApiResult<Response> {
-   let c = state.pool.get().await?;
-   let user_email = lookup_user_email(&c, p.user_id).await?;
-   let users = users::list_admin_compact().bind(&c).all().await?;
-   Ok(render(&AdminUsersPage {
+   let conn = state.pool.get().await?;
+   let user_email = lookup_user_email(&conn, principal.user_id).await?;
+   let users = users::list_admin_compact().bind(&conn).all().await?;
+   render(&AdminUsersPage {
       user_email,
-      is_admin: p.is_admin,
-      current_user_id: p.user_id,
+      is_admin: principal.is_admin,
+      current_user_id: principal.user_id,
       users,
-   })?)
+   })
 }
 
 #[derive(Template)]
 #[template(path = "admin_domains.html")]
 struct AdminDomainsPage {
    user_email: String,
-   /// Read by askama (see AdminUsersPage::is_admin).
-   #[allow(dead_code)]
+   /// Read by askama (see `AdminUsersPage::is_admin`).
+   #[expect(
+      dead_code,
+      reason = "read by askama template macro, invisible to rustc"
+   )]
    is_admin:   bool,
    domains:    Vec<AdminDomainRowView>,
 }
@@ -379,23 +391,26 @@ struct ContactsPage {
 
 async fn contacts_page(
    State(state): State<AppState>,
-   Extension(p): Extension<Principal>,
+   Extension(principal): Extension<Principal>,
    Path(alias_id): Path<i64>,
 ) -> ApiResult<Response> {
-   let c = state.pool.get().await?;
+   let conn = state.pool.get().await?;
    let alias_address = aliases::address_for_user()
-      .bind(&c, &alias_id, &p.user_id)
+      .bind(&conn, &alias_id, &principal.user_id)
       .opt()
       .await?
       .ok_or(ApiError::NotFound)?;
-   let contacts = contacts::list_for_alias().bind(&c, &alias_id).all().await?;
-   let user_email = lookup_user_email(&c, p.user_id).await?;
-   Ok(render(&ContactsPage {
+   let contacts = contacts::list_for_alias()
+      .bind(&conn, &alias_id)
+      .all()
+      .await?;
+   let user_email = lookup_user_email(&conn, principal.user_id).await?;
+   render(&ContactsPage {
       alias_address,
       contacts,
       user_email,
-      is_admin: p.is_admin,
-   })?)
+      is_admin: principal.is_admin,
+   })
 }
 
 #[derive(Deserialize)]
@@ -418,52 +433,53 @@ const ACTIVITY_PAGE_SIZE: i64 = 50;
 
 async fn activity_page(
    State(state): State<AppState>,
-   Extension(p): Extension<Principal>,
+   Extension(principal): Extension<Principal>,
    Path(alias_id): Path<i64>,
-   Query(q): Query<ActivityQuery>,
+   Query(query): Query<ActivityQuery>,
 ) -> ApiResult<Response> {
-   let c = state.pool.get().await?;
+   let conn = state.pool.get().await?;
    let alias_address = aliases::address_for_user()
-      .bind(&c, &alias_id, &p.user_id)
+      .bind(&conn, &alias_id, &principal.user_id)
       .opt()
       .await?
       .ok_or(ApiError::NotFound)?;
-   let page = q.page.unwrap_or(0).max(0);
+   let page = query.page.unwrap_or(0).max(0);
    let activities = email_log::activity_for_alias()
       .bind(
-         &c,
+         &conn,
          &alias_id,
          &(ACTIVITY_PAGE_SIZE + 1),
          &(page * ACTIVITY_PAGE_SIZE),
       )
       .all()
       .await?;
-   let has_next = activities.len() as i64 > ACTIVITY_PAGE_SIZE;
+   let has_next =
+      i64::try_from(activities.len()).expect("activity count fits in i64") > ACTIVITY_PAGE_SIZE;
    let activities: Vec<ActivityRowView> = activities
       .into_iter()
-      .take(ACTIVITY_PAGE_SIZE as usize)
+      .take(usize::try_from(ACTIVITY_PAGE_SIZE).expect("page size fits in usize"))
       .collect();
-   let user_email = lookup_user_email(&c, p.user_id).await?;
-   Ok(render(&ActivityPage {
+   let user_email = lookup_user_email(&conn, principal.user_id).await?;
+   render(&ActivityPage {
       alias_address,
       activities,
       page,
       has_next,
       user_email,
-      is_admin: p.is_admin,
-   })?)
+      is_admin: principal.is_admin,
+   })
 }
 
 async fn admin_domains_page(
    State(state): State<AppState>,
-   AdminPrincipal(p): AdminPrincipal,
+   AdminPrincipal(principal): AdminPrincipal,
 ) -> ApiResult<Response> {
-   let c = state.pool.get().await?;
-   let user_email = lookup_user_email(&c, p.user_id).await?;
-   let domains = domains::list_admin().bind(&c).all().await?;
-   Ok(render(&AdminDomainsPage {
+   let conn = state.pool.get().await?;
+   let user_email = lookup_user_email(&conn, principal.user_id).await?;
+   let domains = domains::list_admin().bind(&conn).all().await?;
+   render(&AdminDomainsPage {
       user_email,
-      is_admin: p.is_admin,
+      is_admin: principal.is_admin,
       domains,
-   })?)
+   })
 }

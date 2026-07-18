@@ -1,6 +1,7 @@
 //! Parse the topmost `Authentication-Results:` header written by our
-//! stalwart (matches authserv-id against configured hostname). Ignore
-//! deeper AR headers — they were written by earlier hops and are not
+//! stalwart (matches authserv-id against configured hostname).
+//!
+//! Ignore deeper AR headers — they were written by earlier hops and are not
 //! authoritative for our trust decision.
 
 #[derive(Debug, Default, Clone)]
@@ -14,6 +15,7 @@ pub struct AuthResults {
 }
 
 /// Parse the raw AR header line (without the "Authentication-Results:" prefix).
+#[must_use]
 pub fn parse_single(line: &str) -> Option<(String, AuthResults)> {
    // format: authserv-id; method=result ...; method=result ...
    let (authserv, rest) = line.split_once(';')?;
@@ -46,18 +48,20 @@ pub fn parse_single(line: &str) -> Option<(String, AuthResults)> {
 }
 
 /// Given the full list of AR header values (multi-line), return the results
-/// written by `expected_authserv_id` (usually our stalwart's hostname). If
-/// multiple, take the topmost — sender-supplied AR headers may be present
+/// written by `expected_authserv_id` (usually our stalwart's hostname).
+///
+/// If multiple, take the topmost — sender-supplied AR headers may be present
 /// deeper in the mail.
-pub fn extract_for(
-   headers: impl IntoIterator<Item = impl AsRef<str>>,
-   expected_authserv_id: &str,
-) -> Option<AuthResults> {
-   for h in headers {
-      if let Some((authserv, r)) = parse_single(h.as_ref()) {
-         if authserv.eq_ignore_ascii_case(expected_authserv_id) {
-            return Some(r);
-         }
+pub fn extract_for<I, S>(headers: I, expected_authserv_id: &str) -> Option<AuthResults>
+where
+   I: IntoIterator<Item = S>,
+   S: AsRef<str>,
+{
+   for header in headers {
+      if let Some((authserv, results)) = parse_single(header.as_ref())
+         && authserv.eq_ignore_ascii_case(expected_authserv_id)
+      {
+         return Some(results);
       }
    }
    None
@@ -65,9 +69,16 @@ pub fn extract_for(
 
 /// Reply-path policy: AR.dmarc=pass, AR header.from binds to the
 /// visible From we parsed, and the visible From equals the mailbox
-/// address exactly. Same-domain alignment is too loose — any gmail
+/// address exactly.
+///
+/// Same-domain alignment is too loose — any gmail
 /// user could reply to alice@gmail.com's reverse alias and impersonate
 /// her. Tighten only when an authorized-sender table exists.
+///
+/// # Errors
+/// Returns an error describing the first failed check: DMARC not `pass`,
+/// a missing or misaligned `header.from` binding, or a visible From that
+/// doesn't equal the mailbox address.
 pub fn reply_policy_ok(
    ar: &AuthResults,
    mailbox_email: &str,
@@ -81,16 +92,18 @@ pub fn reply_policy_ok(
    }
    // Binding: what stalwart vouched for must equal what we're about to
    // trust. Guards against parser divergence between stalwart and us.
-   let Some(visible_from_domain) = visible_from.rsplit_once('@').map(|(_, d)| d) else {
+   let Some(visible_from_domain) = visible_from.rsplit_once('@').map(|(_, domain)| domain) else {
       return Err(format!("visible From '{visible_from}' has no @"));
    };
    match ar.dmarc_header_from.as_deref() {
       None => {
          return Err("DMARC result lacks header.from binding; cannot trust alignment".into());
       },
-      Some(h) => {
+      Some(header_from) => {
          // header.from can be a bare domain or an address; compare domains.
-         let ar_domain = h.rsplit_once('@').map(|(_, d)| d).unwrap_or(h);
+         let ar_domain = header_from
+            .rsplit_once('@')
+            .map_or(header_from, |(_, domain)| domain);
          if !ar_domain.eq_ignore_ascii_case(visible_from_domain) {
             return Err(format!(
                "AR header.from domain {ar_domain} does not match parsed visible From domain \
@@ -108,16 +121,17 @@ pub fn reply_policy_ok(
 }
 
 #[cfg(test)]
+#[expect(clippy::inline_modules, reason = "unit tests kept beside impl")]
 mod tests {
    use super::*;
 
    #[test]
    fn parses_dmarc_pass() {
-      let (s, r) =
+      let (authserv, results) =
          parse_single("mail.example.com; dmarc=pass header.from=gmail.com; spf=pass").unwrap();
-      assert_eq!(s, "mail.example.com");
-      assert_eq!(r.dmarc.as_deref(), Some("pass"));
-      assert_eq!(r.dmarc_header_from.as_deref(), Some("gmail.com"));
+      assert_eq!(authserv, "mail.example.com");
+      assert_eq!(results.dmarc.as_deref(), Some("pass"));
+      assert_eq!(results.dmarc_header_from.as_deref(), Some("gmail.com"));
    }
 
    #[test]
@@ -148,7 +162,7 @@ mod tests {
    #[test]
    fn reply_policy_accepts_exact_mailbox() {
       let ar = ar_pass("gmail.com");
-      assert!(reply_policy_ok(&ar, "alice@gmail.com", "alice@gmail.com").is_ok());
+      reply_policy_ok(&ar, "alice@gmail.com", "alice@gmail.com").unwrap();
    }
 
    #[test]

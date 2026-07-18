@@ -3,9 +3,11 @@
 //! starts can't race the migration. Idempotent.
 
 use anyhow::{
-   Context,
+   Context as _,
    Result,
 };
+
+use crate::db;
 
 refinery::embed_migrations!("migrations");
 
@@ -14,8 +16,14 @@ refinery::embed_migrations!("migrations");
 // compilation unit.
 pub use self::migrations::runner;
 
+/// Apply pending refinery migrations, then return.
+///
+/// # Errors
+///
+/// Returns an error if the initial database connection fails or the
+/// refinery runner aborts (e.g. on a divergent or missing migration).
 pub async fn run(url: &str) -> Result<()> {
-   let mut client = crate::db::connect_once(url).await?;
+   let mut client = db::connect_once(url).await?;
    // Abort on divergent/missing migrations so V001 edits fail loudly.
    let report = migrations::runner()
       .set_abort_divergent(true)
@@ -28,8 +36,12 @@ pub async fn run(url: &str) -> Result<()> {
    if applied.is_empty() {
       tracing::info!("no migrations to apply");
    } else {
-      for m in applied {
-         tracing::info!(version = m.version(), name = m.name(), "applied migration");
+      for migration in applied {
+         tracing::info!(
+            version = migration.version(),
+            name = migration.name(),
+            "applied migration"
+         );
       }
    }
    Ok(())

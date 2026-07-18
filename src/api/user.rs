@@ -15,13 +15,18 @@ use serde::{
    Serialize,
 };
 
-use super::shared::hash_password;
+use super::shared;
 use crate::{
    AppState,
+   abuse,
    auth::Principal,
    error::{
       ApiError,
       ApiResult,
+   },
+   flows::{
+      self,
+      StartEmailChangeError,
    },
 };
 
@@ -37,17 +42,17 @@ pub(super) struct UserInfo {
 
 pub(super) async fn user_info(
    State(state): State<AppState>,
-   Extension(p): Extension<Principal>,
+   Extension(principal): Extension<Principal>,
 ) -> ApiResult<Json<UserInfo>> {
-   let c = state.pool.get().await?;
-   let r = users::info().bind(&c, &p.user_id).one().await?;
+   let conn = state.pool.get().await?;
+   let info = users::info().bind(&conn, &principal.user_id).one().await?;
    Ok(Json(UserInfo {
-      user_id:       p.user_id,
-      email:         r.email,
-      is_admin:      r.is_admin,
-      alias_count:   r.alias_count,
-      mailbox_count: r.mailbox_count,
-      domain_count:  r.domain_count,
+      user_id:       principal.user_id,
+      email:         info.email,
+      is_admin:      info.is_admin,
+      alias_count:   info.alias_count,
+      mailbox_count: info.mailbox_count,
+      domain_count:  info.domain_count,
    }))
 }
 
@@ -59,7 +64,7 @@ pub(super) struct ChangePassword {
 
 pub(super) async fn user_change_password(
    State(state): State<AppState>,
-   Extension(p): Extension<Principal>,
+   Extension(principal): Extension<Principal>,
    Json(body): Json<ChangePassword>,
 ) -> ApiResult<StatusCode> {
    if body.new_password.len() < 10 {
@@ -67,8 +72,8 @@ pub(super) async fn user_change_password(
          "New password must be at least 10 characters.".into(),
       ));
    }
-   let mut c = state.pool.get().await?;
-   let txn = c.transaction().await?;
+   let mut conn = state.pool.get().await?;
+   let txn = conn.transaction().await?;
    // Read + verify + write all under a row-level lock. Without
    // FOR UPDATE here, a concurrent admin reset / password-reset-token
    // flow can commit a recovery password BETWEEN our verify and our
@@ -79,10 +84,10 @@ pub(super) async fn user_change_password(
    let row = txn
       .query_opt(
          "SELECT password_hash::text FROM \"user\" WHERE id = $1 FOR UPDATE",
-         &[&p.user_id],
+         &[&principal.user_id],
       )
       .await?;
-   let stored: Option<String> = row.and_then(|r| r.get::<_, Option<String>>(0));
+   let stored: Option<String> = row.and_then(|record| record.get::<_, Option<String>>(0));
    let Some(stored) = stored else {
       return Err(ApiError::BadRequest(
          "No password is set for this account.".into(),
@@ -93,13 +98,15 @@ pub(super) async fn user_change_password(
          "Current password is incorrect.".into(),
       ));
    }
-   let new_hash = hash_password(&body.new_password)?;
+   let new_hash = shared::hash_password(&body.new_password)?;
    users::set_password()
-      .bind(&txn, &Some(new_hash), &p.user_id)
+      .bind(&txn, &Some(new_hash), &principal.user_id)
       .await?;
-   sessions::delete_by_user().bind(&txn, &p.user_id).await?;
+   sessions::delete_by_user()
+      .bind(&txn, &principal.user_id)
+      .await?;
    txn.commit().await?;
-   state.verify_cache.invalidate_user(p.user_id);
+   state.verify_cache.invalidate_user(principal.user_id);
    Ok(StatusCode::NO_CONTENT)
 }
 
@@ -110,17 +117,17 @@ pub(super) struct ChangeEmailRequest {
 
 pub(super) async fn user_start_email_change(
    State(state): State<AppState>,
-   Extension(p): Extension<Principal>,
+   Extension(principal): Extension<Principal>,
    Json(body): Json<ChangeEmailRequest>,
 ) -> ApiResult<StatusCode> {
-   use std::str::FromStr;
+   use std::str::FromStr as _;
    let new_email = body.new_email.trim();
    lettre::Address::from_str(new_email)
       .map_err(|_| ApiError::BadRequest("Enter a valid email address.".into()))?;
-   let ok = crate::abuse::check(
+   let ok = abuse::check(
       &state.pool,
-      &format!("email_change:{}", p.user_id),
-      crate::abuse::EMAIL_CHANGE,
+      &format!("email_change:{}", principal.user_id),
+      abuse::EMAIL_CHANGE,
    )
    .await
    .map_err(ApiError::Internal)?;
@@ -129,19 +136,19 @@ pub(super) async fn user_start_email_change(
          "too many requests. Try again later".into(),
       ));
    }
-   crate::flows::start_email_change(
+   flows::start_email_change(
       &state.pool,
       state.mailer.as_ref(),
       &state.config.public_origin,
-      p.user_id,
+      principal.user_id,
       new_email,
    )
    .await
    .map_err(|error| match error {
-      crate::flows::StartEmailChangeError::AlreadyRegistered => {
+      StartEmailChangeError::AlreadyRegistered => {
          ApiError::Conflict("An account already uses this email address.".into())
       },
-      crate::flows::StartEmailChangeError::Internal(error) => ApiError::Internal(error),
+      StartEmailChangeError::Internal(error) => ApiError::Internal(error),
    })?;
    Ok(StatusCode::ACCEPTED)
 }

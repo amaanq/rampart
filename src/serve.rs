@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{
-   Context,
+   Context as _,
    Result,
 };
 use axum::{
@@ -17,6 +17,7 @@ use axum::{
       ConnectInfo,
       Path,
       Query,
+      Request,
       State,
    },
    http::{
@@ -27,14 +28,12 @@ use axum::{
    },
    middleware,
    response::{
-      IntoResponse,
+      Html,
+      IntoResponse as _,
       Redirect,
       Response,
    },
-   routing::{
-      get,
-      post,
-   },
+   routing,
 };
 use data_encoding::{
    BASE64,
@@ -45,10 +44,15 @@ use rampart_codegen::queries::{
    users,
    webauthn,
 };
+use rand::rngs::SysRng;
 use serde::Deserialize;
 use time::{
    Duration,
    OffsetDateTime,
+};
+use tokio::{
+   net::TcpListener,
+   signal,
 };
 use tower::ServiceBuilder;
 use tower_http::{
@@ -56,32 +60,55 @@ use tower_http::{
    set_header::SetResponseHeaderLayer,
    trace::TraceLayer,
 };
+use webauthn_rs::prelude::{
+   DiscoverableKey,
+   PublicKeyCredential,
+};
 
 use crate::{
    AppState,
+   abuse,
+   api,
    auth::{
       self,
       SESSION_COOKIE_NAME,
       SESSION_LIFETIME_DAYS,
    },
+   config::Config,
+   db,
    error::{
       ApiError,
       ApiResult,
    },
+   flows::{
+      self,
+      EmailChangeError,
+      MailboxVerifyError,
+      PasswordResetError,
+   },
+   mailer,
+   web,
+   webauthn as passkey_flow,
 };
 
-pub async fn serve(cfg: crate::config::Config) -> Result<()> {
-   let pool = crate::db::build_pool(&cfg.database_url)?;
+/// Builds the axum application and serves it until a shutdown signal.
+///
+/// # Errors
+///
+/// Returns an error if the database pool, mailer, or `WebAuthn` context fail to
+/// initialize, if the listener cannot bind, or if the server exits abnormally.
+pub async fn serve(cfg: Config) -> Result<()> {
+   let pool = db::build_pool(&cfg.database_url)?;
    let _client = pool.get().await.context("acquiring db client")?;
 
-   let mailer: Arc<dyn crate::mailer::Mailer> = if cfg.smtp_password_file.is_some() {
-      Arc::new(crate::mailer::SmtpMailer::from_config(&cfg)?)
+   let mailer: Arc<dyn mailer::Mailer> = if cfg.smtp_password_file.is_some() {
+      Arc::new(mailer::SmtpMailer::from_config(&cfg)?)
    } else {
       tracing::warn!("RAMPART_SMTP_PASSWORD_FILE not set — using in-memory mailer (dev mode)");
-      Arc::new(crate::mailer::MemoryMailer::new())
+      Arc::new(mailer::MemoryMailer::new())
    };
 
-   let webauthn = Arc::new(crate::webauthn::build(&cfg)?);
+   let webauthn = Arc::new(passkey_flow::build(&cfg)?);
 
    let state = AppState {
       pool,
@@ -92,8 +119,8 @@ pub async fn serve(cfg: crate::config::Config) -> Result<()> {
    };
 
    let authed = Router::new()
-      .merge(crate::api::router())
-      .merge(crate::web::router())
+      .merge(api::router())
+      .merge(web::router())
       .layer(middleware::from_fn_with_state(
          state.clone(),
          auth::origin_layer,
@@ -109,24 +136,36 @@ pub async fn serve(cfg: crate::config::Config) -> Result<()> {
    // The Origin layer is redundant here and falsely-rejects browsers
    // that strip Origin/Referer.
    let public_form_token = Router::new()
-      .route("/signup/{token}", get(signup_page).post(signup_post))
-      .route("/auth/reset/{token}", get(reset_page).post(reset_post))
+      .route(
+         "/signup/{token}",
+         routing::get(signup_page).post(signup_post),
+      )
+      .route(
+         "/auth/reset/{token}",
+         routing::get(reset_page).post(reset_post),
+      )
       .route(
          "/auth/change-email/{token}",
-         get(change_email_page).post(change_email_post),
+         routing::get(change_email_page).post(change_email_post),
       )
       .route(
          "/mailbox/verify/{token}",
-         get(mailbox_verify_page).post(mailbox_verify_post),
+         routing::get(mailbox_verify_page).post(mailbox_verify_post),
       );
 
    // No URL token to lean on — keep the Origin/Referer gate.
    let public_form_origin = Router::new()
-      .route("/login", get(login_page).post(login_post))
-      .route("/logout", post(logout_post))
-      .route("/auth/forgot", get(forgot_page).post(forgot_post))
-      .route("/api/v1/auth/passkey/start", post(passkey_auth_start))
-      .route("/api/v1/auth/passkey/finish", post(passkey_auth_finish))
+      .route("/login", routing::get(login_page).post(login_post))
+      .route("/logout", routing::post(logout_post))
+      .route("/auth/forgot", routing::get(forgot_page).post(forgot_post))
+      .route(
+         "/api/v1/auth/passkey/start",
+         routing::post(passkey_auth_start),
+      )
+      .route(
+         "/api/v1/auth/passkey/finish",
+         routing::post(passkey_auth_finish),
+      )
       .layer(middleware::from_fn_with_state(
          state.clone(),
          auth::public_form_origin_layer,
@@ -141,8 +180,8 @@ pub async fn serve(cfg: crate::config::Config) -> Result<()> {
       .service(ServeDir::new(state.config.static_dir.clone()));
 
    let public = Router::new()
-      .route("/healthz", get(|| async { "ok" }))
-      .route("/setup", get(setup_page).post(setup_post))
+      .route("/healthz", routing::get(|| async { "ok" }))
+      .route("/setup", routing::get(setup_page).post(setup_post))
       .merge(public_form_token)
       .merge(public_form_origin)
       .nest_service("/static", static_files);
@@ -155,12 +194,12 @@ pub async fn serve(cfg: crate::config::Config) -> Result<()> {
       .layer(TraceLayer::new_for_http())
       .with_state(state.clone());
 
-   let listener = tokio::net::TcpListener::bind(state.config.listen)
+   let listener = TcpListener::bind(state.config.listen)
       .await
       .with_context(|| format!("binding {}", state.config.listen))?;
 
    tracing::info!(addr = %state.config.listen, "rampart listening");
-   let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Ready]);
+   let _ = sd_notify::notify(&[sd_notify::NotifyState::Ready]);
 
    axum::serve(
       listener,
@@ -174,23 +213,23 @@ pub async fn serve(cfg: crate::config::Config) -> Result<()> {
 
 async fn shutdown_signal() {
    let ctrl_c = async {
-      let _ = tokio::signal::ctrl_c().await;
+      let _ = signal::ctrl_c().await;
    };
    #[cfg(unix)]
    let term = async {
       use tokio::signal::unix::{
+         self,
          SignalKind,
-         signal,
       };
-      let mut s = signal(SignalKind::terminate()).expect("install SIGTERM");
-      s.recv().await;
+      let mut sigterm = unix::signal(SignalKind::terminate()).expect("install SIGTERM");
+      sigterm.recv().await;
    };
    #[cfg(not(unix))]
    let term = std::future::pending::<()>();
 
-   tokio::select! { _ = ctrl_c => {}, _ = term => {} }
+   tokio::select! { () = ctrl_c => {}, () = term => {} }
    tracing::info!("shutting down");
-   let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Stopping]);
+   let _ = sd_notify::notify(&[sd_notify::NotifyState::Stopping]);
 }
 
 #[derive(Default, Deserialize)]
@@ -214,12 +253,6 @@ fn login_destination(next: &str) -> &str {
 }
 
 async fn login_page(State(state): State<AppState>, Query(query): Query<LoginQuery>) -> Response {
-   // First-run UX: if no user has been created yet, bounce the operator
-   // straight to /setup. Removes the need for any documented "first run
-   // CLI step" — the deploy URL is the only thing they need to hit.
-   if user_table_empty(&state).await.unwrap_or(false) {
-      return Redirect::to("/setup").into_response();
-   }
    use askama::Template;
    #[derive(Template)]
    #[template(path = "login.html")]
@@ -230,6 +263,12 @@ async fn login_page(State(state): State<AppState>, Query(query): Query<LoginQuer
       email:          &'a str,
       focus_password: bool,
    }
+   // First-run UX: if no user has been created yet, bounce the operator
+   // straight to /setup. Removes the need for any documented "first run
+   // CLI step" — the deploy URL is the only thing they need to hit.
+   if user_table_empty(&state).await.unwrap_or(false) {
+      return Redirect::to("/setup").into_response();
+   }
    match (LoginPage {
       error:          None,
       next:           login_destination(&query.next),
@@ -239,14 +278,14 @@ async fn login_page(State(state): State<AppState>, Query(query): Query<LoginQuer
    })
    .render()
    {
-      Ok(body) => (StatusCode::OK, axum::response::Html(body)).into_response(),
-      Err(e) => ApiError::Template(e).into_response(),
+      Ok(body) => (StatusCode::OK, Html(body)).into_response(),
+      Err(err) => ApiError::Template(err).into_response(),
    }
 }
 
 async fn user_table_empty(state: &AppState) -> ApiResult<bool> {
-   let c = state.pool.get().await?;
-   Ok(!users::any_exists().bind(&c).one().await?)
+   let client = state.pool.get().await?;
+   Ok(!users::any_exists().bind(&client).one().await?)
 }
 
 // Double-submit-cookie CSRF for /setup. GET emits a random token in both
@@ -257,11 +296,11 @@ async fn user_table_empty(state: &AppState) -> ApiResult<bool> {
 const SETUP_CSRF_COOKIE: &str = "rampart_setup_csrf";
 
 fn new_setup_csrf_token() -> String {
-   use rand::TryRngCore;
-   let mut bytes = [0u8; 24];
-   rand::rngs::OsRng
+   use rand::TryRng as _;
+   let mut bytes = [0_u8; 24];
+   SysRng
       .try_fill_bytes(&mut bytes)
-      .expect("OsRng must not fail");
+      .expect("SysRng must not fail");
    BASE64URL_NOPAD.encode(&bytes)
 }
 
@@ -280,9 +319,9 @@ fn build_setup_csrf_cookie(state: &AppState, token: &str) -> String {
 fn extract_setup_csrf_cookie(headers: &HeaderMap) -> Option<String> {
    let cookie_header = headers.get(header::COOKIE)?.to_str().ok()?;
    for piece in cookie_header.split(';') {
-      let (k, v) = piece.trim().split_once('=')?;
-      if k == SETUP_CSRF_COOKIE {
-         return Some(v.to_owned());
+      let (key, value) = piece.trim().split_once('=')?;
+      if key == SETUP_CSRF_COOKIE {
+         return Some(value.to_owned());
       }
    }
    None
@@ -328,13 +367,13 @@ fn render_setup_page(
    })
    .render()
    {
-      Ok(b) => b,
-      Err(e) => return ApiError::Template(e).into_response(),
+      Ok(rendered) => rendered,
+      Err(err) => return ApiError::Template(err).into_response(),
    };
-   let mut resp = (status, axum::response::Html(body)).into_response();
+   let mut resp = (status, Html(body)).into_response();
    resp.headers_mut().insert(
       header::SET_COOKIE,
-      build_setup_csrf_cookie(&state, &token).parse().unwrap(),
+      build_setup_csrf_cookie(state, &token).parse().unwrap(),
    );
    resp
 }
@@ -348,24 +387,25 @@ struct SetupForm {
    csrf_token:   String,
 }
 
+#[expect(
+   clippy::cognitive_complexity,
+   reason = "linear CSRF-check then account-bootstrap flow reads clearer inline than split"
+)]
 async fn setup_post(
    State(state): State<AppState>,
    headers: HeaderMap,
    Form(form): Form<SetupForm>,
 ) -> Response {
-   let cookie_token = match extract_setup_csrf_cookie(&headers) {
-      Some(t) => t,
-      None => {
-         tracing::warn!("setup_post: missing CSRF cookie");
-         return render_setup_page(
-            &state,
-            StatusCode::FORBIDDEN,
-            Some("This setup page expired. Review the details and try again."),
-            &form.email,
-            form.display_name.as_deref().unwrap_or(""),
-            true,
-         );
-      },
+   let Some(cookie_token) = extract_setup_csrf_cookie(&headers) else {
+      tracing::warn!("setup_post: missing CSRF cookie");
+      return render_setup_page(
+         &state,
+         StatusCode::FORBIDDEN,
+         Some("This setup page expired. Review the details and try again."),
+         &form.email,
+         form.display_name.as_deref().unwrap_or(""),
+         true,
+      );
    };
    if !constant_time_eq::constant_time_eq(cookie_token.as_bytes(), form.csrf_token.as_bytes()) {
       tracing::warn!("setup_post: CSRF token mismatch");
@@ -383,7 +423,7 @@ async fn setup_post(
    // authoritative gate, so even a race between two simultaneous POSTs
    // resolves correctly. The page-level check is just for a nicer
    // error message — Ok(None) on race-lost still falls through to 404.
-   let user_id = match crate::flows::bootstrap_first_admin(
+   let user_id = match flows::bootstrap_first_admin(
       &state.pool,
       &form.email,
       &form.password,
@@ -393,9 +433,9 @@ async fn setup_post(
    {
       Ok(Some(id)) => id,
       Ok(None) => return (StatusCode::NOT_FOUND, "404").into_response(),
-      Err(e) => {
-         tracing::warn!(error = %e, "setup_post failed");
-         let (status, message) = if e.to_string().contains("password must be") {
+      Err(err) => {
+         tracing::warn!(error = %err, "setup_post failed");
+         let (status, message) = if err.to_string().contains("password must be") {
             (
                StatusCode::BAD_REQUEST,
                "Password must be at least 10 characters.",
@@ -422,17 +462,23 @@ async fn setup_post(
    let expiry = OffsetDateTime::now_utc() + Duration::hours(24 * SESSION_LIFETIME_DAYS);
    let user_agent = headers
       .get(header::USER_AGENT)
-      .and_then(|v| v.to_str().ok())
-      .map(|s| s.to_string());
-   let c = match state.pool.get().await {
-      Ok(c) => c,
-      Err(e) => return ApiError::Pool(e).into_response(),
+      .and_then(|value| value.to_str().ok())
+      .map(str::to_owned);
+   let client = match state.pool.get().await {
+      Ok(client) => client,
+      Err(err) => return ApiError::Pool(err).into_response(),
    };
-   if let Err(e) = sessions::create()
-      .bind(&c, &session_id.to_vec(), &user_id, &expiry, &user_agent)
+   if let Err(err) = sessions::create()
+      .bind(
+         &client,
+         &session_id.to_vec(),
+         &user_id,
+         &expiry,
+         &user_agent,
+      )
       .await
    {
-      return ApiError::Db(e).into_response();
+      return ApiError::Db(err).into_response();
    }
 
    let cookie = build_session_cookie(&state, &session_id);
@@ -461,7 +507,7 @@ async fn login_post(
    let ip_key = format!("login_fail:ip:{}", remote.ip());
    let email_key = format!("login_fail:email:{}", form.email.to_lowercase());
    for key in [&ip_key, &email_key] {
-      match crate::abuse::check(&state.pool, key, crate::abuse::LOGIN_FAIL).await {
+      match abuse::check(&state.pool, key, abuse::LOGIN_FAIL).await {
          Ok(false) => {
             return (
                StatusCode::TOO_MANY_REQUESTS,
@@ -474,18 +520,18 @@ async fn login_post(
                .into_response();
          },
          Ok(true) => {},
-         Err(e) => return ApiError::Internal(e).into_response(),
+         Err(err) => return ApiError::Internal(err).into_response(),
       }
    }
 
    let creds = BASE64.encode(format!("{}:{}", form.email, form.password).as_bytes());
-   let mut h = HeaderMap::new();
-   h.insert(
+   let mut auth_headers = HeaderMap::new();
+   auth_headers.insert(
       header::AUTHORIZATION,
       format!("Basic {creds}").parse().unwrap(),
    );
-   let principal = match auth::extract_principal(&state, &h).await {
-      Ok(Some(p)) => p,
+   let principal = match auth::extract_principal(&state, &auth_headers).await {
+      Ok(Some(principal)) => principal,
       Ok(None) => {
          return (
             StatusCode::UNAUTHORIZED,
@@ -493,26 +539,26 @@ async fn login_post(
          )
             .into_response();
       },
-      Err(e) => return e.into_response(),
+      Err(err) => return err.into_response(),
    };
 
-   let _ = crate::abuse::clear(&state.pool, &ip_key).await;
-   let _ = crate::abuse::clear(&state.pool, &email_key).await;
+   let _ = abuse::clear(&state.pool, &ip_key).await;
+   let _ = abuse::clear(&state.pool, &email_key).await;
 
    let session_id = auth::new_session_id();
    let expiry = OffsetDateTime::now_utc() + Duration::hours(24 * SESSION_LIFETIME_DAYS);
    let user_agent = headers
       .get(header::USER_AGENT)
-      .and_then(|v| v.to_str().ok())
-      .map(|s| s.to_string());
+      .and_then(|value| value.to_str().ok())
+      .map(str::to_owned);
 
-   let c = match state.pool.get().await {
-      Ok(c) => c,
-      Err(e) => return ApiError::Pool(e).into_response(),
+   let client = match state.pool.get().await {
+      Ok(client) => client,
+      Err(err) => return ApiError::Pool(err).into_response(),
    };
-   if let Err(e) = sessions::create()
+   if let Err(err) = sessions::create()
       .bind(
-         &c,
+         &client,
          &session_id.to_vec(),
          &principal.user_id,
          &expiry,
@@ -520,7 +566,7 @@ async fn login_post(
       )
       .await
    {
-      return ApiError::Db(e).into_response();
+      return ApiError::Db(err).into_response();
    }
 
    let cookie = build_session_cookie(&state, &session_id);
@@ -575,26 +621,28 @@ fn login_page_with_error(msg: &str, next: &str, email: &str) -> Response {
    })
    .render()
    {
-      Ok(body) => axum::response::Html(body).into_response(),
-      Err(e) => ApiError::Template(e).into_response(),
+      Ok(body) => Html(body).into_response(),
+      Err(err) => ApiError::Template(err).into_response(),
    }
 }
 
 async fn logout_post(State(state): State<AppState>, headers: HeaderMap) -> Response {
    // /logout lives on the public router so origin_layer doesn't cover it.
-   let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
+   let origin = headers
+      .get(header::ORIGIN)
+      .and_then(|value| value.to_str().ok());
    match origin {
-      Some(o) if o == state.config.public_origin => {},
+      Some(value) if value == state.config.public_origin => {},
       _ => {
          return (StatusCode::FORBIDDEN, "403 cross-origin").into_response();
       },
    }
    if let Some(sid) = extract_session_id_from_headers(&headers) {
-      let c = match state.pool.get().await {
-         Ok(c) => c,
-         Err(e) => return ApiError::Pool(e).into_response(),
+      let client = match state.pool.get().await {
+         Ok(client) => client,
+         Err(err) => return ApiError::Pool(err).into_response(),
       };
-      let _ = sessions::delete_by_id().bind(&c, &sid).await;
+      let _ = sessions::delete_by_id().bind(&client, &sid).await;
    }
    let clear_cookie = build_clear_session_cookie(&state);
    let mut resp = Redirect::to("/login").into_response();
@@ -607,9 +655,9 @@ async fn logout_post(State(state): State<AppState>, headers: HeaderMap) -> Respo
 fn extract_session_id_from_headers(headers: &HeaderMap) -> Option<Vec<u8>> {
    let cookie_header = headers.get(header::COOKIE)?.to_str().ok()?;
    for piece in cookie_header.split(';') {
-      let (k, v) = piece.trim().split_once('=')?;
-      if k == SESSION_COOKIE_NAME {
-         return BASE64URL_NOPAD.decode(v.as_bytes()).ok();
+      let (key, value) = piece.trim().split_once('=')?;
+      if key == SESSION_COOKIE_NAME {
+         return BASE64URL_NOPAD.decode(value.as_bytes()).ok();
       }
    }
    None
@@ -643,8 +691,8 @@ fn render_signup_page(
    })
    .render()
    {
-      Ok(body) => (status, axum::response::Html(body)).into_response(),
-      Err(e) => ApiError::Template(e).into_response(),
+      Ok(body) => (status, Html(body)).into_response(),
+      Err(err) => ApiError::Template(err).into_response(),
    }
 }
 
@@ -678,11 +726,11 @@ async fn signup_post(
          &form.email,
          form.display_name.as_deref().unwrap_or(""),
       ),
-      Err(e) => e.into_response(),
+      Err(err) => err.into_response(),
    }
 }
 
-fn signup_api_error(error: crate::flows::InviteSignupError) -> ApiError {
+fn signup_api_error(error: flows::InviteSignupError) -> ApiError {
    use crate::flows::InviteSignupError;
    match error {
       InviteSignupError::PasswordTooShort => {
@@ -711,7 +759,7 @@ async fn signup_inner(
    form: &SignupForm,
    headers: &HeaderMap,
 ) -> ApiResult<Response> {
-   let (user_id, _is_admin) = crate::flows::claim_invite_and_create_user(
+   let (user_id, _is_admin) = flows::claim_invite_and_create_user(
       &state.pool,
       token,
       &form.email,
@@ -725,11 +773,17 @@ async fn signup_inner(
    let expiry = OffsetDateTime::now_utc() + Duration::hours(24 * SESSION_LIFETIME_DAYS);
    let user_agent = headers
       .get(header::USER_AGENT)
-      .and_then(|v| v.to_str().ok())
-      .map(|s| s.to_string());
-   let c = state.pool.get().await?;
+      .and_then(|value| value.to_str().ok())
+      .map(str::to_owned);
+   let client = state.pool.get().await?;
    sessions::create()
-      .bind(&c, &session_id.to_vec(), &user_id, &expiry, &user_agent)
+      .bind(
+         &client,
+         &session_id.to_vec(),
+         &user_id,
+         &expiry,
+         &user_agent,
+      )
       .await?;
 
    let cookie = build_session_cookie(state, &session_id);
@@ -759,8 +813,8 @@ fn render_forgot_page(
       email: &'a str,
    }
    match (ForgotPage { sent, error, email }).render() {
-      Ok(body) => (status, axum::response::Html(body)).into_response(),
-      Err(e) => ApiError::Template(e).into_response(),
+      Ok(body) => (status, Html(body)).into_response(),
+      Err(err) => ApiError::Template(err).into_response(),
    }
 }
 
@@ -779,7 +833,7 @@ async fn forgot_post(
       format!("forgot:email:{}", form.email.to_lowercase()),
       format!("forgot:ip:{}", remote.ip()),
    ] {
-      match crate::abuse::check(&state.pool, &key, crate::abuse::FORGOT_PASSWORD).await {
+      match abuse::check(&state.pool, &key, abuse::FORGOT_PASSWORD).await {
          Ok(true) => {},
          Ok(false) => {
             return render_forgot_page(
@@ -792,7 +846,7 @@ async fn forgot_post(
          Err(error) => return ApiError::Internal(error).into_response(),
       }
    }
-   if let Err(error) = crate::flows::start_password_reset(
+   if let Err(error) = flows::start_password_reset(
       &state.pool,
       state.mailer.as_ref(),
       &state.config.public_origin,
@@ -818,8 +872,8 @@ fn render_reset_page(status: StatusCode, token: &str, error: Option<&str>) -> Re
       error: Option<&'a str>,
    }
    match (ResetPage { token, error }).render() {
-      Ok(body) => (status, axum::response::Html(body)).into_response(),
-      Err(e) => ApiError::Template(e).into_response(),
+      Ok(body) => (status, Html(body)).into_response(),
+      Err(err) => ApiError::Template(err).into_response(),
    }
 }
 
@@ -837,7 +891,7 @@ async fn reset_post(
    // 20/hour/IP — flattens automated enumeration without hitting typo retries.
    let key = format!("reset_apply:ip:{}", remote.ip());
    if matches!(
-      crate::abuse::check(&state.pool, &key, crate::abuse::RESET_APPLY).await,
+      abuse::check(&state.pool, &key, abuse::RESET_APPLY).await,
       Ok(false)
    ) {
       return render_reset_page(
@@ -846,21 +900,15 @@ async fn reset_post(
          Some("Too many reset attempts. Try again later."),
       );
    }
-   match crate::flows::apply_password_reset(
-      &state.pool,
-      &state.verify_cache,
-      &token,
-      &form.password,
-   )
-   .await
+   match flows::apply_password_reset(&state.pool, &state.verify_cache, &token, &form.password).await
    {
       Ok(()) => Redirect::to("/login?reset=true").into_response(),
-      Err(crate::flows::PasswordResetError::PasswordTooShort) => render_reset_page(
+      Err(PasswordResetError::PasswordTooShort) => render_reset_page(
          StatusCode::BAD_REQUEST,
          &token,
          Some("Password must be at least 10 characters."),
       ),
-      Err(crate::flows::PasswordResetError::Invalid) => render_simple_message(
+      Err(PasswordResetError::Invalid) => render_simple_message(
          StatusCode::BAD_REQUEST,
          "Reset link isn’t valid",
          "Check that you opened the complete link from your password reset email.",
@@ -868,7 +916,7 @@ async fn reset_post(
          "/auth/forgot",
          "Request a new reset link",
       ),
-      Err(crate::flows::PasswordResetError::Expired) => render_simple_message(
+      Err(PasswordResetError::Expired) => render_simple_message(
          StatusCode::GONE,
          "Reset link expired",
          "This password reset link has expired. Request a new one to continue.",
@@ -876,7 +924,7 @@ async fn reset_post(
          "/auth/forgot",
          "Request a new reset link",
       ),
-      Err(crate::flows::PasswordResetError::AlreadyUsed) => render_simple_message(
+      Err(PasswordResetError::AlreadyUsed) => render_simple_message(
          StatusCode::GONE,
          "Reset link already used",
          "This password reset link has already been used. Request a new one if you still need to \
@@ -885,9 +933,7 @@ async fn reset_post(
          "/auth/forgot",
          "Request a new reset link",
       ),
-      Err(crate::flows::PasswordResetError::Internal(error)) => {
-         ApiError::Internal(error).into_response()
-      },
+      Err(PasswordResetError::Internal(error)) => ApiError::Internal(error).into_response(),
    }
 }
 
@@ -916,7 +962,7 @@ async fn change_email_page(Path(token): Path<String>) -> Response {
 }
 
 async fn change_email_post(State(state): State<AppState>, Path(token): Path<String>) -> Response {
-   match crate::flows::apply_email_change(&state.pool, &token).await {
+   match flows::apply_email_change(&state.pool, &token).await {
       Ok(email) => render_simple_message(
          StatusCode::OK,
          "Email changed",
@@ -925,7 +971,7 @@ async fn change_email_post(State(state): State<AppState>, Path(token): Path<Stri
          "/settings",
          "Go to settings",
       ),
-      Err(crate::flows::EmailChangeError::Invalid) => render_simple_message(
+      Err(EmailChangeError::Invalid) => render_simple_message(
          StatusCode::BAD_REQUEST,
          "Email change link isn’t valid",
          "Check that you opened the complete link from your email.",
@@ -933,7 +979,7 @@ async fn change_email_post(State(state): State<AppState>, Path(token): Path<Stri
          "/settings",
          "Go to settings",
       ),
-      Err(crate::flows::EmailChangeError::Expired) => render_simple_message(
+      Err(EmailChangeError::Expired) => render_simple_message(
          StatusCode::GONE,
          "Email change link expired",
          "This email change link has expired. Start the change again from settings.",
@@ -941,7 +987,7 @@ async fn change_email_post(State(state): State<AppState>, Path(token): Path<Stri
          "/settings",
          "Go to settings",
       ),
-      Err(crate::flows::EmailChangeError::AlreadyUsed) => render_simple_message(
+      Err(EmailChangeError::AlreadyUsed) => render_simple_message(
          StatusCode::GONE,
          "Email change link already used",
          "This email change link has already been used. Check your current address in settings.",
@@ -949,7 +995,7 @@ async fn change_email_post(State(state): State<AppState>, Path(token): Path<Stri
          "/settings",
          "Go to settings",
       ),
-      Err(crate::flows::EmailChangeError::AlreadyRegistered) => render_simple_message(
+      Err(EmailChangeError::AlreadyRegistered) => render_simple_message(
          StatusCode::CONFLICT,
          "Email already in use",
          "Another account already uses this email address. Choose a different address in settings.",
@@ -957,9 +1003,7 @@ async fn change_email_post(State(state): State<AppState>, Path(token): Path<Stri
          "/settings",
          "Go to settings",
       ),
-      Err(crate::flows::EmailChangeError::Internal(error)) => {
-         ApiError::Internal(error).into_response()
-      },
+      Err(EmailChangeError::Internal(error)) => ApiError::Internal(error).into_response(),
    }
 }
 
@@ -987,7 +1031,7 @@ async fn mailbox_verify_page(Path(token): Path<String>) -> Response {
 }
 
 async fn mailbox_verify_post(State(state): State<AppState>, Path(token): Path<String>) -> Response {
-   match crate::flows::apply_mailbox_verify(&state.pool, &token).await {
+   match flows::apply_mailbox_verify(&state.pool, &token).await {
       Ok(_id) => render_simple_message(
          StatusCode::OK,
          "Mailbox verified",
@@ -996,7 +1040,7 @@ async fn mailbox_verify_post(State(state): State<AppState>, Path(token): Path<St
          "/mailboxes",
          "Go to mailboxes",
       ),
-      Err(crate::flows::MailboxVerifyError::Invalid) => render_simple_message(
+      Err(MailboxVerifyError::Invalid) => render_simple_message(
          StatusCode::BAD_REQUEST,
          "Verification link isn’t valid",
          "Check that you opened the complete link from your email.",
@@ -1004,7 +1048,7 @@ async fn mailbox_verify_post(State(state): State<AppState>, Path(token): Path<St
          "/mailboxes",
          "Go to mailboxes",
       ),
-      Err(crate::flows::MailboxVerifyError::Expired) => render_simple_message(
+      Err(MailboxVerifyError::Expired) => render_simple_message(
          StatusCode::GONE,
          "Verification link expired",
          "This mailbox verification link has expired. Send a new one from mailboxes.",
@@ -1012,7 +1056,7 @@ async fn mailbox_verify_post(State(state): State<AppState>, Path(token): Path<St
          "/mailboxes",
          "Go to mailboxes",
       ),
-      Err(crate::flows::MailboxVerifyError::AlreadyUsed) => render_simple_message(
+      Err(MailboxVerifyError::AlreadyUsed) => render_simple_message(
          StatusCode::GONE,
          "Verification link already used",
          "This link has already been used. Check the mailbox status in rampart.",
@@ -1020,16 +1064,14 @@ async fn mailbox_verify_post(State(state): State<AppState>, Path(token): Path<St
          "/mailboxes",
          "Go to mailboxes",
       ),
-      Err(crate::flows::MailboxVerifyError::Internal(error)) => {
-         ApiError::Internal(error).into_response()
-      },
+      Err(MailboxVerifyError::Internal(error)) => ApiError::Internal(error).into_response(),
    }
 }
 
-fn render_or_err(r: Result<String, askama::Error>) -> Response {
-   match r {
-      Ok(body) => axum::response::Html(body).into_response(),
-      Err(e) => ApiError::Template(e).into_response(),
+fn render_or_err(rendered: Result<String, askama::Error>) -> Response {
+   match rendered {
+      Ok(body) => Html(body).into_response(),
+      Err(err) => ApiError::Template(err).into_response(),
    }
 }
 
@@ -1051,7 +1093,7 @@ fn render_simple_message(
    link_href: &str,
    link_label: &str,
 ) -> Response {
-   use askama::Template;
+   use askama::Template as _;
    match (SimpleMessage {
       heading,
       message,
@@ -1061,8 +1103,8 @@ fn render_simple_message(
    })
    .render()
    {
-      Ok(body) => (status, axum::response::Html(body)).into_response(),
-      Err(e) => ApiError::Template(e).into_response(),
+      Ok(body) => (status, Html(body)).into_response(),
+      Err(err) => ApiError::Template(err).into_response(),
    }
 }
 
@@ -1086,16 +1128,18 @@ async fn passkey_auth_start(
    // Blunt account-presence enumeration via start responses.
    let key = format!("passkey_start:ip:{}", remote.ip());
    if matches!(
-      crate::abuse::check(&state.pool, &key, crate::abuse::LOGIN_FAIL).await,
+      abuse::check(&state.pool, &key, abuse::LOGIN_FAIL).await,
       Ok(false)
    ) {
       return (StatusCode::TOO_MANY_REQUESTS, "slow down").into_response();
    }
-   match passkey_auth_start_inner(&state, body.email).await {
-      Ok(resp) => Json(resp).into_response(),
-      // Uniform error — don't leak whether the user exists / has passkeys.
-      Err(_) => (StatusCode::BAD_REQUEST, "passkey auth unavailable").into_response(),
-   }
+   passkey_auth_start_inner(&state, body.email)
+      .await
+      .map_or_else(
+         // Uniform error — don't leak whether the user exists / has passkeys.
+         |_| (StatusCode::BAD_REQUEST, "passkey auth unavailable").into_response(),
+         |resp| Json(resp).into_response(),
+      )
 }
 
 async fn passkey_auth_start_inner(
@@ -1105,7 +1149,7 @@ async fn passkey_auth_start_inner(
    if email.trim().is_empty() {
       let (challenge, auth_state) = state.webauthn.start_discoverable_authentication()?;
       let id =
-         crate::webauthn::save_discoverable_authentication_state(&state.pool, &auth_state).await?;
+         passkey_flow::save_discoverable_authentication_state(&state.pool, &auth_state).await?;
       return Ok(PasskeyStartResp {
          ceremony_id:  hex::encode(&id),
          challenge:    serde_json::to_value(&challenge)?,
@@ -1113,9 +1157,9 @@ async fn passkey_auth_start_inner(
       });
    }
 
-   let (_user_id, passkeys) = crate::webauthn::load_passkeys_for_email(&state.pool, &email).await?;
+   let (_user_id, passkeys) = passkey_flow::load_passkeys_for_email(&state.pool, &email).await?;
    let (challenge, auth_state) = state.webauthn.start_passkey_authentication(&passkeys)?;
-   let id = crate::webauthn::save_authentication_state(&state.pool, None, &auth_state).await?;
+   let id = passkey_flow::save_authentication_state(&state.pool, None, &auth_state).await?;
    Ok(PasskeyStartResp {
       ceremony_id:  hex::encode(&id),
       challenge:    serde_json::to_value(&challenge)?,
@@ -1126,7 +1170,7 @@ async fn passkey_auth_start_inner(
 #[derive(Deserialize)]
 struct PasskeyFinishReq {
    ceremony_id:  String,
-   credential:   webauthn_rs::prelude::PublicKeyCredential,
+   credential:   PublicKeyCredential,
    #[serde(default)]
    discoverable: bool,
 }
@@ -1138,9 +1182,9 @@ async fn passkey_auth_finish(
 ) -> Response {
    match passkey_auth_finish_inner(&state, headers, body).await {
       Ok(resp) => resp,
-      Err(e) => {
+      Err(err) => {
          // Uniform 401 — don't leak which step failed.
-         tracing::warn!(error = ?e, "passkey auth finish failed");
+         tracing::warn!(error = ?err, "passkey auth finish failed");
          (StatusCode::UNAUTHORIZED, "auth failed").into_response()
       },
    }
@@ -1154,21 +1198,21 @@ async fn passkey_auth_finish_inner(
    let id = hex::decode(&body.ceremony_id)?;
    let (result, user_id) = if body.discoverable {
       let auth_state =
-         crate::webauthn::load_discoverable_authentication_state(&state.pool, &id).await?;
+         passkey_flow::load_discoverable_authentication_state(&state.pool, &id).await?;
       let (handle, credential_id) = state
          .webauthn
          .identify_discoverable_authentication(&body.credential)?;
       let credential_id = credential_id.to_vec();
-      let c = state.pool.get().await?;
+      let client = state.pool.get().await?;
       let user_id = webauthn::credential_user_id()
-         .bind(&c, &credential_id)
+         .bind(&client, &credential_id)
          .one()
          .await?;
-      anyhow::ensure!(handle == crate::webauthn::user_handle(user_id));
-      let passkeys = crate::webauthn::load_passkeys_for_user(&state.pool, user_id).await?;
+      anyhow::ensure!(handle == passkey_flow::user_handle(user_id));
+      let passkeys = passkey_flow::load_passkeys_for_user(&state.pool, user_id).await?;
       let discoverable_keys = passkeys
          .iter()
-         .map(webauthn_rs::prelude::DiscoverableKey::from)
+         .map(DiscoverableKey::from)
          .collect::<Vec<_>>();
       let result = state.webauthn.finish_discoverable_authentication(
          &body.credential,
@@ -1177,32 +1221,38 @@ async fn passkey_auth_finish_inner(
       )?;
       (result, user_id)
    } else {
-      let auth_state = crate::webauthn::load_authentication_state(&state.pool, &id).await?;
+      let auth_state = passkey_flow::load_authentication_state(&state.pool, &id).await?;
       let result = state
          .webauthn
          .finish_passkey_authentication(&body.credential, &auth_state)?;
       let credential_id = result.cred_id().as_ref().to_vec();
-      let c = state.pool.get().await?;
+      let client = state.pool.get().await?;
       let user_id = webauthn::credential_user_id()
-         .bind(&c, &credential_id)
+         .bind(&client, &credential_id)
          .one()
          .await?;
       (result, user_id)
    };
    let cred_id: &[u8] = result.cred_id().as_ref();
-   let c = state.pool.get().await?;
+   let client = state.pool.get().await?;
    // webauthn-rs needs the full updated Passkey blob (counter + backup
    // flags) round-tripped, not just sign_count.
-   crate::webauthn::update_credential_after_auth(&state.pool, cred_id, &result).await?;
+   passkey_flow::update_credential_after_auth(&state.pool, cred_id, &result).await?;
 
    let session_id = auth::new_session_id();
    let expiry = OffsetDateTime::now_utc() + Duration::hours(24 * SESSION_LIFETIME_DAYS);
    let user_agent = headers
       .get(header::USER_AGENT)
-      .and_then(|v| v.to_str().ok())
-      .map(|s| s.to_string());
+      .and_then(|value| value.to_str().ok())
+      .map(str::to_owned);
    sessions::create()
-      .bind(&c, &session_id.to_vec(), &user_id, &expiry, &user_agent)
+      .bind(
+         &client,
+         &session_id.to_vec(),
+         &user_id,
+         &expiry,
+         &user_agent,
+      )
       .await?;
 
    let cookie = build_session_cookie(state, &session_id);
@@ -1216,30 +1266,26 @@ async fn passkey_auth_finish_inner(
 /// Strict CSP (`script-src 'self'`) — see static/app.js + static/webauthn.js
 /// for the template refactor that lets this hold. `pub` so tests/headers.rs
 /// can layer the production middleware directly.
-pub async fn security_headers_layer(
-   req: axum::extract::Request,
-   next: middleware::Next,
-) -> Response {
-   use axum::http::HeaderValue;
+pub async fn security_headers_layer(req: Request, next: middleware::Next) -> Response {
    let mut resp = next.run(req).await;
-   let h = resp.headers_mut();
-   h.insert(
+   let headers = resp.headers_mut();
+   headers.insert(
       "Content-Security-Policy",
       HeaderValue::from_static(
          "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; \
           connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
       ),
    );
-   h.insert("X-Frame-Options", HeaderValue::from_static("DENY"));
-   h.insert(
+   headers.insert("X-Frame-Options", HeaderValue::from_static("DENY"));
+   headers.insert(
       "X-Content-Type-Options",
       HeaderValue::from_static("nosniff"),
    );
-   h.insert(
+   headers.insert(
       "Referrer-Policy",
       HeaderValue::from_static("strict-origin-when-cross-origin"),
    );
-   h.insert(
+   headers.insert(
       "Permissions-Policy",
       HeaderValue::from_static("interest-cohort=()"),
    );
@@ -1247,6 +1293,10 @@ pub async fn security_headers_layer(
 }
 
 #[cfg(test)]
+#[expect(
+   clippy::inline_modules,
+   reason = "unit tests kept inline with the code they cover"
+)]
 mod tests {
    use super::{
       login_destination,
@@ -1302,6 +1352,10 @@ mod tests {
          ),
       ];
 
+      #[expect(
+         clippy::panic,
+         reason = "test must fail loudly on an unexpected error variant"
+      )]
       for (input, expected) in cases {
          match signup_api_error(input) {
             ApiError::BadRequest(message) | ApiError::Conflict(message) => {

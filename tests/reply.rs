@@ -1,9 +1,10 @@
-//! Forward + reply pipeline tests with ephemeral DB + MemorySubmit.
+//! Forward + reply pipeline tests with ephemeral DB + `MemorySubmit`.
 //! Bounce-VERP tests live in `tests/bounce.rs`.
 //!
 //! `tests/fixtures/ar_real.txt` is the AR header we parse against.
 //! Replace it with a real captured header from your stalwart if the
 //! parser ever drifts.
+#![expect(clippy::tests_outside_test_module, reason = "integration test file")]
 
 mod support;
 
@@ -16,11 +17,14 @@ use rampart::{
       WorkerState,
       loop_guard::Rcpt,
       pipeline::{
+         self,
          Delivery,
          Verdict,
-         process,
       },
-      resubmit::MemorySubmit,
+      resubmit::{
+         MemorySubmit,
+         Submit,
+      },
    },
 };
 use support::TestDb;
@@ -44,9 +48,9 @@ fn real_ar_header() -> String {
    // value without those notes leaking into the test message.
    let raw = include_str!("fixtures/ar_real.txt");
    raw.lines()
-      .find(|l| {
-         let t = l.trim();
-         !t.is_empty() && !t.starts_with("##")
+      .find(|line| {
+         let trimmed = line.trim();
+         !trimmed.is_empty() && !trimmed.starts_with("##")
       })
       .expect("ar_real.txt must contain at least one AR-header line")
       .trim_end()
@@ -54,7 +58,7 @@ fn real_ar_header() -> String {
 }
 
 /// Build the worker state used by all reply-path tests. Returns the
-/// state plus the MemorySubmit so the test can drain captured outbound
+/// state plus the `MemorySubmit` so the test can drain captured outbound
 /// submissions.
 fn make_state(pool: deadpool_postgres::Pool) -> (WorkerState, Arc<MemorySubmit>) {
    let cfg = Config {
@@ -79,24 +83,29 @@ fn make_state(pool: deadpool_postgres::Pool) -> (WorkerState, Arc<MemorySubmit>)
       verp_key:                     b"test-key-32-bytes-long-padding-padding".to_vec(),
    };
    let submit = Arc::new(MemorySubmit::new());
+   #[expect(
+      clippy::clone_on_ref_ptr,
+      reason = "clone coerces Arc<MemorySubmit> into the Arc<dyn Submit> field"
+   )]
+   let submit_dyn: Arc<dyn Submit> = submit.clone();
    let state = WorkerState {
       pool,
       config: Arc::new(cfg),
       mailer: Arc::new(MemoryMailer::new()),
-      submit: submit.clone(),
+      submit: submit_dyn,
    };
    (state, submit)
 }
 
 /// Insert user / mailbox / domain / alias. Returns ids.
 async fn seed(
-   c: &deadpool_postgres::Client,
+   client: &deadpool_postgres::Client,
    user_email: &str,
    mailbox_email: &str,
    alias_domain: &str,
    alias_local: &str,
 ) -> (i64, i64, i64, i64) {
-   let u: i64 = c
+   let user_id: i64 = client
       .query_one(
          "INSERT INTO \"user\" (email, password_hash) VALUES ($1, 'x') RETURNING id",
          &[&user_email],
@@ -104,51 +113,52 @@ async fn seed(
       .await
       .unwrap()
       .get("id");
-   let m: i64 = c
+   let mailbox_id: i64 = client
       .query_one(
          "INSERT INTO mailbox (user_id, email, verified) VALUES ($1, $2, TRUE) RETURNING id",
-         &[&u, &mailbox_email],
+         &[&user_id, &mailbox_email],
       )
       .await
       .unwrap()
       .get("id");
-   let d: i64 = c
+   let domain_id: i64 = client
       .query_one(
          "INSERT INTO alias_domain (domain, owner_id, shared) VALUES ($1, $2, FALSE) RETURNING id",
-         &[&alias_domain, &u],
+         &[&alias_domain, &user_id],
       )
       .await
       .unwrap()
       .get("id");
    let alias_addr = format!("{alias_local}@{alias_domain}");
-   let a: i64 = c
+   let alias_id: i64 = client
       .query_one(
          "INSERT INTO alias (user_id, address, domain_id, mailbox_id) VALUES ($1, $2, $3, $4) \
           RETURNING id",
-         &[&u, &alias_addr, &d, &m],
+         &[&user_id, &alias_addr, &domain_id, &mailbox_id],
       )
       .await
       .unwrap()
       .get("id");
-   (u, m, d, a)
+   (user_id, mailbox_id, domain_id, alias_id)
 }
 
 async fn insert_reverse_contact(
-   c: &deadpool_postgres::Client,
+   client: &deadpool_postgres::Client,
    alias_id: i64,
    real_email: &str,
    alias_domain: &str,
 ) -> i64 {
    let token = format!("tok-{alias_id}-{}", real_email.replace(['@', '.'], ""));
    let reply = format!("ra+{token}@{alias_domain}");
-   c.query_one(
-      "INSERT INTO reverse_contact (alias_id, real_email, token, reply_address) VALUES ($1, $2, \
-       $3, $4) RETURNING id",
-      &[&alias_id, &real_email, &token, &reply],
-   )
-   .await
-   .unwrap()
-   .get("id")
+   client
+      .query_one(
+         "INSERT INTO reverse_contact (alias_id, real_email, token, reply_address) VALUES ($1, \
+          $2, $3, $4) RETURNING id",
+         &[&alias_id, &real_email, &token, &reply],
+      )
+      .await
+      .unwrap()
+      .get("id")
 }
 
 /// Build a forward-direction inbound message body: external sender with
@@ -176,19 +186,19 @@ fn reply_msg(visible_from: &str, ar_line: &str, body: &str) -> Vec<u8> {
 async fn forward_happy_path() {
    let db = test_db!();
    {
-      let c = db.pool.get().await.unwrap();
-      seed(&c, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
+      let client = db.pool.get().await.unwrap();
+      seed(&client, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
    }
    let (state, submit) = make_state(db.pool.clone());
    let alias_id = 1;
    let raw = forward_msg("ext@sender.test", "hi", "body bytes");
-   let v = process(&state, Delivery {
+   let verdict = pipeline::process(&state, Delivery {
       rcpt:      Rcpt::Forward(alias_id),
       mail_from: "ext@sender.test".into(),
       raw:       raw.clone(),
    })
    .await;
-   assert!(matches!(v, Verdict::Delivered), "got {v:?}");
+   assert!(matches!(verdict, Verdict::Delivered), "got {verdict:?}");
    let captured = submit.drain();
    assert_eq!(captured.len(), 1);
    // Codex P1.1: outbound forward MAIL FROM is the HMAC-signed bounce
@@ -220,20 +230,20 @@ async fn forward_happy_path() {
 async fn forward_creates_reverse_contact() {
    let db = test_db!();
    {
-      let c = db.pool.get().await.unwrap();
-      seed(&c, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
+      let client = db.pool.get().await.unwrap();
+      seed(&client, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
    }
    let (state, _submit) = make_state(db.pool.clone());
    let raw = forward_msg("friend@example.org", "hi", "msg");
-   let _ = process(&state, Delivery {
+   let _ = pipeline::process(&state, Delivery {
       rcpt: Rcpt::Forward(1),
       mail_from: "friend@example.org".into(),
       raw,
    })
    .await;
 
-   let c = db.pool.get().await.unwrap();
-   let row = c
+   let client = db.pool.get().await.unwrap();
+   let row = client
       .query_one(
          "SELECT alias_id, real_email::text AS email FROM reverse_contact ORDER BY id DESC LIMIT 1",
          &[],
@@ -252,20 +262,21 @@ async fn forward_creates_reverse_contact() {
 async fn forward_disabled_alias_5xx() {
    let db = test_db!();
    {
-      let c = db.pool.get().await.unwrap();
-      seed(&c, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
-      c.execute("UPDATE alias SET enabled = FALSE WHERE id = 1", &[])
+      let client = db.pool.get().await.unwrap();
+      seed(&client, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
+      client
+         .execute("UPDATE alias SET enabled = FALSE WHERE id = 1", &[])
          .await
          .unwrap();
    }
    let (state, _submit) = make_state(db.pool.clone());
-   let v = process(&state, Delivery {
+   let verdict = pipeline::process(&state, Delivery {
       rcpt:      Rcpt::Forward(1),
       mail_from: "ext@sender.test".into(),
       raw:       forward_msg("ext@sender.test", "hi", "x"),
    })
    .await;
-   assert!(matches!(v, Verdict::Perm { .. }), "got {v:?}");
+   assert!(matches!(verdict, Verdict::Perm { .. }), "got {verdict:?}");
    db.teardown().await;
 }
 
@@ -273,20 +284,20 @@ async fn forward_disabled_alias_5xx() {
 async fn reply_dmarc_pass_aligned_using_real_ar_header() {
    let db = test_db!();
    let (rc_id, _alias_addr) = {
-      let c = db.pool.get().await.unwrap();
-      seed(&c, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
-      let rc = insert_reverse_contact(&c, 1, "friend@example.org", "addy.test").await;
+      let client = db.pool.get().await.unwrap();
+      seed(&client, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
+      let rc = insert_reverse_contact(&client, 1, "friend@example.org", "addy.test").await;
       (rc, "abc@addy.test".to_owned())
    };
    let (state, submit) = make_state(db.pool.clone());
    let raw = reply_msg("alice@gmail.com", &real_ar_header(), "reply body");
-   let v = process(&state, Delivery {
+   let verdict = pipeline::process(&state, Delivery {
       rcpt: Rcpt::Reply(rc_id),
       mail_from: "alice@gmail.com".into(),
       raw,
    })
    .await;
-   assert!(matches!(v, Verdict::Delivered), "got {v:?}");
+   assert!(matches!(verdict, Verdict::Delivered), "got {verdict:?}");
    let captured = submit.drain();
    assert_eq!(captured.len(), 1);
    // Codex P1.1: reply MAIL FROM is also a signed bounce VERP, on the
@@ -309,20 +320,20 @@ async fn reply_dmarc_pass_aligned_using_real_ar_header() {
 async fn reply_dmarc_fail_5xx() {
    let db = test_db!();
    let rc_id = {
-      let c = db.pool.get().await.unwrap();
-      seed(&c, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
-      insert_reverse_contact(&c, 1, "friend@example.org", "addy.test").await
+      let client = db.pool.get().await.unwrap();
+      seed(&client, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
+      insert_reverse_contact(&client, 1, "friend@example.org", "addy.test").await
    };
    let (state, submit) = make_state(db.pool.clone());
    let ar = format!("{STALWART_HOSTNAME}; dmarc=fail header.from=gmail.com");
    let raw = reply_msg("alice@gmail.com", &ar, "x");
-   let v = process(&state, Delivery {
+   let verdict = pipeline::process(&state, Delivery {
       rcpt: Rcpt::Reply(rc_id),
       mail_from: "alice@gmail.com".into(),
       raw,
    })
    .await;
-   assert!(matches!(v, Verdict::Perm { .. }), "got {v:?}");
+   assert!(matches!(verdict, Verdict::Perm { .. }), "got {verdict:?}");
    assert!(submit.drain().is_empty());
    db.teardown().await;
 }
@@ -331,21 +342,21 @@ async fn reply_dmarc_fail_5xx() {
 async fn reply_unaligned_5xx() {
    let db = test_db!();
    let rc_id = {
-      let c = db.pool.get().await.unwrap();
-      seed(&c, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
-      insert_reverse_contact(&c, 1, "friend@example.org", "addy.test").await
+      let client = db.pool.get().await.unwrap();
+      seed(&client, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
+      insert_reverse_contact(&client, 1, "friend@example.org", "addy.test").await
    };
    let (state, _submit) = make_state(db.pool.clone());
    // AR pass for spoof.com but mailbox is at gmail.com — alignment fails.
    let ar = format!("{STALWART_HOSTNAME}; dmarc=pass header.from=spoof.com");
    let raw = reply_msg("imposter@spoof.com", &ar, "x");
-   let v = process(&state, Delivery {
+   let verdict = pipeline::process(&state, Delivery {
       rcpt: Rcpt::Reply(rc_id),
       mail_from: "imposter@spoof.com".into(),
       raw,
    })
    .await;
-   assert!(matches!(v, Verdict::Perm { .. }), "got {v:?}");
+   assert!(matches!(verdict, Verdict::Perm { .. }), "got {verdict:?}");
    db.teardown().await;
 }
 
@@ -353,35 +364,38 @@ async fn reply_unaligned_5xx() {
 async fn reply_cross_user_same_domain_rejected_then_exact_match_passes() {
    let db = test_db!();
    let rc_id = {
-      let c = db.pool.get().await.unwrap();
-      seed(&c, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
-      insert_reverse_contact(&c, 1, "friend@example.org", "addy.test").await
+      let client = db.pool.get().await.unwrap();
+      seed(&client, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
+      insert_reverse_contact(&client, 1, "friend@example.org", "addy.test").await
    };
    let (state, submit) = make_state(db.pool.clone());
    let ar = format!("{STALWART_HOSTNAME}; dmarc=pass header.from=gmail.com");
    // Same gmail tenant, different user — exact-mailbox check rejects.
    let raw_other = reply_msg("bob@gmail.com", &ar, "x");
-   let v = process(&state, Delivery {
+   let verdict_other = pipeline::process(&state, Delivery {
       rcpt:      Rcpt::Reply(rc_id),
       mail_from: "bob@gmail.com".into(),
       raw:       raw_other,
    })
    .await;
    assert!(
-      matches!(v, Verdict::Perm { .. }),
-      "cross-user must reject: {v:?}"
+      matches!(verdict_other, Verdict::Perm { .. }),
+      "cross-user must reject: {verdict_other:?}"
    );
    assert!(submit.drain().is_empty());
 
    // Exact match passes and produces one outbound submit.
    let raw_self = reply_msg("alice@gmail.com", &ar, "x");
-   let v = process(&state, Delivery {
+   let verdict_self = pipeline::process(&state, Delivery {
       rcpt:      Rcpt::Reply(rc_id),
       mail_from: "alice@gmail.com".into(),
       raw:       raw_self,
    })
    .await;
-   assert!(matches!(v, Verdict::Delivered), "exact must pass: {v:?}");
+   assert!(
+      matches!(verdict_self, Verdict::Delivered),
+      "exact must pass: {verdict_self:?}"
+   );
    assert_eq!(submit.drain().len(), 1);
 
    db.teardown().await;
@@ -391,27 +405,28 @@ async fn reply_cross_user_same_domain_rejected_then_exact_match_passes() {
 async fn reply_block_reply_5xx() {
    let db = test_db!();
    let rc_id = {
-      let c = db.pool.get().await.unwrap();
-      seed(&c, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
-      let rc = insert_reverse_contact(&c, 1, "friend@example.org", "addy.test").await;
-      c.execute(
-         "UPDATE reverse_contact SET block_reply = TRUE WHERE id = $1",
-         &[&rc as &(dyn ToSql + Sync)],
-      )
-      .await
-      .unwrap();
+      let client = db.pool.get().await.unwrap();
+      seed(&client, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
+      let rc = insert_reverse_contact(&client, 1, "friend@example.org", "addy.test").await;
+      client
+         .execute(
+            "UPDATE reverse_contact SET block_reply = TRUE WHERE id = $1",
+            &[&rc as &(dyn ToSql + Sync)],
+         )
+         .await
+         .unwrap();
       rc
    };
    let (state, submit) = make_state(db.pool.clone());
    let ar = format!("{STALWART_HOSTNAME}; dmarc=pass header.from=gmail.com");
    let raw = reply_msg("alice@gmail.com", &ar, "x");
-   let v = process(&state, Delivery {
+   let verdict = pipeline::process(&state, Delivery {
       rcpt: Rcpt::Reply(rc_id),
       mail_from: "alice@gmail.com".into(),
       raw,
    })
    .await;
-   assert!(matches!(v, Verdict::Perm { .. }), "got {v:?}");
+   assert!(matches!(verdict, Verdict::Perm { .. }), "got {verdict:?}");
    assert!(submit.drain().is_empty());
    db.teardown().await;
 }
@@ -420,9 +435,9 @@ async fn reply_block_reply_5xx() {
 async fn reply_parser_divergence_rejected() {
    let db = test_db!();
    let rc_id = {
-      let c = db.pool.get().await.unwrap();
-      seed(&c, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
-      insert_reverse_contact(&c, 1, "friend@example.org", "addy.test").await
+      let client = db.pool.get().await.unwrap();
+      seed(&client, "alice@test", "alice@gmail.com", "addy.test", "abc").await;
+      insert_reverse_contact(&client, 1, "friend@example.org", "addy.test").await
    };
    let (state, _submit) = make_state(db.pool.clone());
    // Stalwart vouched for gmail.com; we parse impostor.example in the
@@ -432,24 +447,28 @@ async fn reply_parser_divergence_rejected() {
    // the binding error message specifically.
    let ar = format!("{STALWART_HOSTNAME}; dmarc=pass header.from=gmail.com");
    let raw = reply_msg("alice@impostor.example", &ar, "x");
-   let v = process(&state, Delivery {
+   let verdict = pipeline::process(&state, Delivery {
       rcpt: Rcpt::Reply(rc_id),
       mail_from: "alice@impostor.example".into(),
       raw,
    })
    .await;
-   match &v {
+   match verdict {
       Verdict::Perm { internal, smtp } => {
          assert!(
             internal.contains("does not match parsed visible From"),
             "expected binding-check error, got internal: {internal}"
          );
          assert_eq!(
-            *smtp, "reply rejected",
+            smtp, "reply rejected",
             "SMTP text should be generic, leaks otherwise"
          );
       },
-      _ => panic!("expected Perm verdict, got {v:?}"),
+      #[expect(
+         clippy::panic,
+         reason = "test fails loudly on an unexpected verdict variant"
+      )]
+      other => panic!("expected Perm verdict, got {other:?}"),
    }
    db.teardown().await;
 }

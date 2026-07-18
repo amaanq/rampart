@@ -1,9 +1,13 @@
 //! Per-message dispatch: forward vs reply, header rewrite, upsert of
-//! reverse_contact, outbound submission. Everything happens here after
-//! the LMTP layer has validated the envelope and assembled the body.
+//! `reverse_contact`, outbound submission.
+//!
+//! Everything happens here after the LMTP layer has validated the envelope
+//! and assembled the body.
+
+use std::str;
 
 use anyhow::{
-   Context,
+   Context as _,
    Result,
    bail,
 };
@@ -13,16 +17,20 @@ use rampart_codegen::queries::{
    contacts,
    email_log,
 };
-use rand::TryRngCore;
+use rand::{
+   TryRng as _,
+   rngs::SysRng,
+};
 
 use crate::worker::{
    WorkerState,
-   auth_results::{
-      extract_for,
-      reply_policy_ok,
+   auth_results,
+   loop_guard::{
+      BouncePhase,
+      Rcpt,
    },
-   loop_guard::Rcpt,
-   resubmit::rewrite_headers,
+   resubmit,
+   verp,
 };
 
 /// The one RCPT we accepted, plus the raw message bytes stalwart delivered.
@@ -33,6 +41,7 @@ pub struct Delivery {
 }
 
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum Verdict {
    Delivered,
    /// 5xx permanent rejection. `internal` is for tracing/logs only;
@@ -51,12 +60,12 @@ pub enum Verdict {
    },
 }
 
-pub async fn process(state: &WorkerState, d: Delivery) -> Verdict {
-   match do_process(state, d).await {
+pub async fn process(state: &WorkerState, delivery: Delivery) -> Verdict {
+   match do_process(state, delivery).await {
       Ok(()) => Verdict::Delivered,
-      Err(e) => {
-         tracing::error!(error = ?e, "pipeline error");
-         let internal = e.to_string();
+      Err(err) => {
+         tracing::error!(error = ?err, "pipeline error");
+         let internal = err.to_string();
          if internal.contains("alias disabled") || internal.contains("alias not found") {
             Verdict::Perm {
                internal,
@@ -82,14 +91,22 @@ pub async fn process(state: &WorkerState, d: Delivery) -> Verdict {
    }
 }
 
-async fn do_process(state: &WorkerState, d: Delivery) -> Result<()> {
-   match d.rcpt {
-      Rcpt::Forward(alias_id) => handle_forward(state, alias_id, &d.mail_from, &d.raw).await,
-      Rcpt::Reply(rc_id) => handle_reply(state, rc_id, &d.mail_from, &d.raw).await,
-      Rcpt::Bounce { payload } => handle_bounce(state, &payload, &d.mail_from, &d.raw).await,
+async fn do_process(state: &WorkerState, delivery: Delivery) -> Result<()> {
+   match delivery.rcpt {
+      Rcpt::Forward(alias_id) => {
+         handle_forward(state, alias_id, &delivery.mail_from, &delivery.raw).await
+      },
+      Rcpt::Reply(rc_id) => handle_reply(state, rc_id, &delivery.mail_from, &delivery.raw).await,
+      Rcpt::Bounce { payload } => {
+         handle_bounce(state, &payload, &delivery.mail_from, &delivery.raw).await
+      },
    }
 }
 
+#[expect(
+   clippy::cognitive_complexity,
+   reason = "forward path is a single linear flow with inline best-effort logging"
+)]
 async fn handle_forward(
    state: &WorkerState,
    alias_id: i64,
@@ -105,30 +122,34 @@ async fn handle_forward(
    // Scope the DB client so it drops before the SMTP submit; otherwise
    // the pool connection is held across network I/O.
    let (alias_address, mailbox_email, alias_domain, user_id, token, email_log_id) = {
-      let c = state.pool.get().await?;
-      let Some(r) = aliases::forward_join().bind(&c, &alias_id).opt().await? else {
+      let client = state.pool.get().await?;
+      let Some(row) = aliases::forward_join()
+         .bind(&client, &alias_id)
+         .opt()
+         .await?
+      else {
          bail!("alias not found ({alias_id})");
       };
-      if !r.alias_enabled || !r.mailbox_enabled || !r.user_enabled {
+      if !row.alias_enabled || !row.mailbox_enabled || !row.user_enabled {
          bail!("alias disabled");
       }
-      let alias_address = r.alias_address;
-      let mailbox_email = r.mailbox_email;
-      let alias_domain = r.alias_domain;
-      let user_id = r.user_id;
+      let alias_address = row.alias_address;
+      let mailbox_email = row.mailbox_email;
+      let alias_domain = row.alias_domain;
+      let user_id = row.user_id;
       let (token, contact_enabled) =
-         upsert_reverse_contact(&c, alias_id, &real_email_key, &alias_domain).await?;
+         upsert_reverse_contact(&client, alias_id, &real_email_key, &alias_domain).await?;
       if !contact_enabled {
          // Accept-and-drop, not 5xx — a 550 backscatters at every
          // upstream retry and confirms the alias exists.
-         if let Err(e) = email_log::insert_block()
-            .bind(&c, &alias_id, &Some(real_email_key.clone()))
+         if let Err(err) = email_log::insert_block()
+            .bind(&client, &alias_id, &Some(real_email_key.clone()))
             .await
          {
-            tracing::error!(error = ?e, alias_id, "block log failed (ignored)");
+            tracing::error!(error = ?err, alias_id, "block log failed (ignored)");
          }
-         if let Err(e) = aliases::bump_block_count().bind(&c, &alias_id).await {
-            tracing::error!(error = ?e, alias_id, "block counter update failed (ignored)");
+         if let Err(err) = aliases::bump_block_count().bind(&client, &alias_id).await {
+            tracing::error!(error = ?err, alias_id, "block counter update failed (ignored)");
          }
          tracing::info!(
             alias_id,
@@ -139,7 +160,7 @@ async fn handle_forward(
          return Ok(());
       }
       let email_log_id = email_log::insert_forward()
-         .bind(&c, &alias_id, &Some(real_email_key.clone()))
+         .bind(&client, &alias_id, &Some(real_email_key.clone()))
          .one()
          .await
          .context("pre-submit email_log insert")?;
@@ -161,13 +182,13 @@ async fn handle_forward(
    };
    let new_from = format!(
       "{} <ra+{}@{}>",
-      crate::worker::resubmit::rfc5322_quoted_display(&display),
+      resubmit::rfc5322_quoted_display(&display),
       token,
       alias_domain
    );
    // To: rewrites to alias_address so Reply All can't leak to the
    // stripped recipients.
-   let new_raw = rewrite_headers(
+   let new_raw = resubmit::rewrite_headers(
       raw,
       &new_from,
       &alias_address,
@@ -176,7 +197,7 @@ async fn handle_forward(
 
    submit_and_track_status(
       state,
-      crate::worker::loop_guard::BouncePhase::Forward,
+      BouncePhase::Forward,
       email_log_id,
       &alias_domain,
       &mailbox_email,
@@ -188,13 +209,13 @@ async fn handle_forward(
    // Post-submit bookkeeping is best-effort: returning Err here would
    // make stalwart retry and duplicate the mail.
    match state.pool.get().await {
-      Ok(c) => {
-         if let Err(e) = aliases::bump_forward_count().bind(&c, &alias_id).await {
-            tracing::error!(error = ?e, alias_id, "counter update failed post-submit (ignored)");
+      Ok(client) => {
+         if let Err(err) = aliases::bump_forward_count().bind(&client, &alias_id).await {
+            tracing::error!(error = ?err, alias_id, "counter update failed post-submit (ignored)");
          }
       },
-      Err(e) => {
-         tracing::error!(error = ?e, alias_id, "pool unavailable post-submit (ignored, mail delivered)");
+      Err(err) => {
+         tracing::error!(error = ?err, alias_id, "pool unavailable post-submit (ignored, mail delivered)");
       },
    }
    tracing::info!(
@@ -211,61 +232,68 @@ async fn handle_forward(
 }
 
 async fn upsert_reverse_contact(
-   c: &deadpool_postgres::Client,
+   client: &deadpool_postgres::Client,
    alias_id: i64,
    real_email: &str,
    alias_domain: &str,
 ) -> Result<(String, bool)> {
    let fresh_token = random_token();
-   let fresh_reply_addr = format!("ra+{}@{}", fresh_token, alias_domain);
-   let r = contacts::upsert_for_worker()
-      .bind(c, &alias_id, &real_email, &fresh_token, &fresh_reply_addr)
+   let fresh_reply_addr = format!("ra+{fresh_token}@{alias_domain}");
+   let row = contacts::upsert_for_worker()
+      .bind(
+         client,
+         &alias_id,
+         &real_email,
+         &fresh_token,
+         &fresh_reply_addr,
+      )
       .one()
       .await?;
-   Ok((r.token, r.enabled))
+   Ok((row.token, row.enabled))
 }
 
 /// Submit with an HMAC-signed bounce VERP as MAIL FROM, then flip
-/// the pre-INSERT email_log row to submitted/failed. Propagates the
+/// the pre-INSERT `email_log` row to submitted/failed. Propagates the
 /// submit error after the best-effort status flip.
 async fn submit_and_track_status(
    state: &WorkerState,
-   phase: crate::worker::loop_guard::BouncePhase,
+   phase: BouncePhase,
    email_log_id: i64,
    alias_domain: &str,
    rcpt_to: &str,
    raw: &[u8],
    err_context: &'static str,
 ) -> Result<()> {
-   let bounce_payload =
-      crate::worker::verp::make_local_payload(&state.config.verp_key, phase, email_log_id);
+   let bounce_payload = verp::make_local_payload(&state.config.verp_key, phase, email_log_id);
    let bounce_from = format!("bnc+{bounce_payload}@{alias_domain}");
    let submit_result = state
       .submit
       .submit(&bounce_from, rcpt_to, raw)
       .await
       .context(err_context);
-   if let Err(e) = &submit_result {
-      if let Ok(c) = state.pool.get().await {
-         let _ = email_log::flip_failed()
-            .bind(&c, &Some(e.to_string()), &email_log_id)
-            .await;
-      }
+   if let Err(err) = submit_result.as_ref()
+      && let Ok(client) = state.pool.get().await
+   {
+      let _ = email_log::flip_failed()
+         .bind(&client, &Some(err.to_string()), &email_log_id)
+         .await;
    }
    submit_result?;
-   if let Ok(c) = state.pool.get().await {
-      if let Err(e) = email_log::flip_submitted().bind(&c, &email_log_id).await {
-         tracing::error!(error = ?e, email_log_id, "status flip pending→submitted failed");
-      }
+   if let Ok(client) = state.pool.get().await
+      && let Err(err) = email_log::flip_submitted()
+         .bind(&client, &email_log_id)
+         .await
+   {
+      tracing::error!(error = ?err, email_log_id, "status flip pending→submitted failed");
    }
    Ok(())
 }
 
 fn random_token() -> String {
-   let mut bytes = [0u8; 10];
-   rand::rngs::OsRng
+   let mut bytes = [0_u8; 10];
+   SysRng
       .try_fill_bytes(&mut bytes)
-      .expect("OsRng must not fail");
+      .expect("SysRng must not fail");
    BASE64URL_NOPAD.encode(&bytes)
 }
 
@@ -283,12 +311,12 @@ fn extract_from(raw: &[u8]) -> (Option<String>, Option<String>) {
    let Some(from) = msg.header("From").or_else(|| msg.header("from")) else {
       return (None, None);
    };
-   match from {
-      HeaderValue::Address(addr) => {
+   match *from {
+      HeaderValue::Address(ref addr) => {
          let addrs = addr.clone().into_list();
-         for a in addrs {
-            let address = a.address().map(|s| s.to_owned());
-            let name = a.name().map(|s| s.to_owned());
+         for entry in addrs {
+            let address = entry.address().map(str::to_owned);
+            let name = entry.name().map(str::to_owned);
             if address.is_some() || name.is_some() {
                return (address, name);
             }
@@ -299,23 +327,31 @@ fn extract_from(raw: &[u8]) -> (Option<String>, Option<String>) {
    }
 }
 
+#[expect(
+   clippy::cognitive_complexity,
+   reason = "reply path is a single linear flow with inline best-effort logging"
+)]
 async fn handle_reply(state: &WorkerState, rc_id: i64, mail_from: &str, raw: &[u8]) -> Result<()> {
    let (real_email, alias_address, alias_id, alias_domain, mailbox_email) = {
-      let c = state.pool.get().await?;
-      let Some(r) = contacts::reply_join().bind(&c, &rc_id).opt().await? else {
+      let client = state.pool.get().await?;
+      let Some(row) = contacts::reply_join().bind(&client, &rc_id).opt().await? else {
          bail!("reverse_contact not found ({rc_id})");
       };
       // Reply addresses outlive later account, alias, and mailbox disables.
-      if !r.rc_enabled || r.block_reply || !r.alias_enabled || !r.mailbox_enabled || !r.user_enabled
+      if !row.rc_enabled
+         || row.block_reply
+         || !row.alias_enabled
+         || !row.mailbox_enabled
+         || !row.user_enabled
       {
          bail!("block_reply or disabled");
       }
       (
-         r.real_email,
-         r.alias_address,
-         r.alias_id,
-         r.alias_domain,
-         r.mailbox_email,
+         row.real_email,
+         row.alias_address,
+         row.alias_id,
+         row.alias_domain,
+         row.mailbox_email,
       )
    };
 
@@ -335,9 +371,9 @@ async fn handle_reply(state: &WorkerState, rc_id: i64, mail_from: &str, raw: &[u
    // External spoofers can't slip into the local-submission branch —
    // their mail enters via port 25 which always carries an AR.
    let ar_lines = extract_authentication_results(raw);
-   if let Some(ar) = extract_for(&ar_lines, &state.config.stalwart_hostname) {
-      reply_policy_ok(&ar, &mailbox_email, &visible_from)
-         .map_err(|e| anyhow::anyhow!("reply-policy: {e}"))?;
+   if let Some(ar) = auth_results::extract_for(&ar_lines, &state.config.stalwart_hostname) {
+      auth_results::reply_policy_ok(&ar, &mailbox_email, &visible_from)
+         .map_err(|err| anyhow::anyhow!("reply-policy: {err}"))?;
    } else {
       if !mail_from.eq_ignore_ascii_case(&mailbox_email)
          || !visible_from.eq_ignore_ascii_case(&mailbox_email)
@@ -356,7 +392,7 @@ async fn handle_reply(state: &WorkerState, rc_id: i64, mail_from: &str, raw: &[u
 
    // From: → alias, To: → real recipient so MUA Reply All targets
    // the real recipient instead of the reverse alias.
-   let new_raw = rewrite_headers(
+   let new_raw = resubmit::rewrite_headers(
       raw,
       &alias_address,
       &real_email,
@@ -366,20 +402,21 @@ async fn handle_reply(state: &WorkerState, rc_id: i64, mail_from: &str, raw: &[u
    // Pre-INSERT so the bounce VERP has an id. Tempfail on DB failure
    // is fine; duplicate delivery is not.
    let email_log_id: i64 = {
-      let c = state.pool.get().await?;
-      c.query_one(
-         "INSERT INTO email_log (alias_id, reverse_contact_id, action, from_address) VALUES ($1, \
-          $2, 'reply', $3) RETURNING id",
-         &[&alias_id, &rc_id, &mail_from],
-      )
-      .await
-      .context("pre-submit email_log insert (reply)")?
-      .get("id")
+      let client = state.pool.get().await?;
+      client
+         .query_one(
+            "INSERT INTO email_log (alias_id, reverse_contact_id, action, from_address) VALUES \
+             ($1, $2, 'reply', $3) RETURNING id",
+            &[&alias_id, &rc_id, &mail_from],
+         )
+         .await
+         .context("pre-submit email_log insert (reply)")?
+         .get("id")
    };
 
    submit_and_track_status(
       state,
-      crate::worker::loop_guard::BouncePhase::Reply,
+      BouncePhase::Reply,
       email_log_id,
       &alias_domain,
       &real_email,
@@ -391,28 +428,28 @@ async fn handle_reply(state: &WorkerState, rc_id: i64, mail_from: &str, raw: &[u
    // Best-effort: returning Err here would retry the LMTP inbound
    // and duplicate the outbound.
    match state.pool.get().await {
-      Ok(c) => {
-         if let Err(e) = c
+      Ok(client) => {
+         if let Err(err) = client
             .execute(
                "UPDATE alias SET nb_reply = nb_reply + 1 WHERE address = $1",
                &[&alias_address],
             )
             .await
          {
-            tracing::error!(error = ?e, "reply counter update failed post-submit (ignored)");
+            tracing::error!(error = ?err, "reply counter update failed post-submit (ignored)");
          }
-         if let Err(e) = c
+         if let Err(err) = client
             .execute(
                "UPDATE reverse_contact SET last_seen_at = now() WHERE id = $1",
                &[&rc_id],
             )
             .await
          {
-            tracing::error!(error = ?e, "reverse_contact last_seen update failed (ignored)");
+            tracing::error!(error = ?err, "reverse_contact last_seen update failed (ignored)");
          }
       },
-      Err(e) => {
-         tracing::error!(error = ?e, rc_id, "pool unavailable post-submit (ignored, mail delivered)");
+      Err(err) => {
+         tracing::error!(error = ?err, rc_id, "pool unavailable post-submit (ignored, mail delivered)");
       },
    }
    tracing::info!(
@@ -435,9 +472,7 @@ async fn handle_bounce(
    mail_from: &str,
    raw: &[u8],
 ) -> Result<()> {
-   let Some((phase, email_log_id)) =
-      crate::worker::verp::verify_payload(&state.config.verp_key, payload)
-   else {
+   let Some((phase, email_log_id)) = verp::verify_payload(&state.config.verp_key, payload) else {
       // Forged VERP — anyone can RCPT TO a guessed bnc+; HMAC is
       // what authenticates the mutation path.
       tracing::warn!(
@@ -448,18 +483,18 @@ async fn handle_bounce(
       return Ok(());
    };
    let reason = extract_dsn_reason(raw);
-   let c = state.pool.get().await?;
+   let client = state.pool.get().await?;
 
    // bnc+f → action='forward', bnc+r → 'reply'. The status filter
    // makes this idempotent.
    let want_action = match phase {
-      crate::worker::loop_guard::BouncePhase::Forward => "forward",
-      crate::worker::loop_guard::BouncePhase::Reply => "reply",
+      BouncePhase::Forward => "forward",
+      BouncePhase::Reply => "reply",
    };
    // Transient DB error tempfails (stalwart retries); swallowing
    // would lose a valid DSN. 0 rows = already-bounced / deleted /
    // phase mismatch — log and move on.
-   let rows = c
+   let rows = client
       .execute(
          "UPDATE email_log SET status = 'bounced', reason = COALESCE($2, reason) WHERE id = $1 \
           AND action = $3 AND status IN ('pending','submitted')",
@@ -492,7 +527,7 @@ async fn handle_bounce(
 fn extract_dsn_reason(raw: &[u8]) -> Option<String> {
    use mail_parser::MessageParser;
    let msg = MessageParser::new().parse(raw)?;
-   for part in msg.parts.iter() {
+   for part in &msg.parts {
       // Skip non-text parts without short-circuiting — later text/*
       // parts may still match.
       let Some(text) = part.text_contents() else {
@@ -502,20 +537,20 @@ fn extract_dsn_reason(raw: &[u8]) -> Option<String> {
          let lower = line.to_ascii_lowercase();
          if let Some(rest) = lower.strip_prefix("diagnostic-code:") {
             let _ = rest; // we want the original-case content
-            let v = line[16..].trim();
-            if !v.is_empty() {
-               return Some(truncate(v, 500));
+            let value = line[16..].trim();
+            if !value.is_empty() {
+               return Some(truncate(value, 500));
             }
          }
       }
    }
    // Fallback: first non-empty trimmed line of body text.
-   for part in msg.parts.iter() {
+   for part in &msg.parts {
       if let Some(text) = part.text_contents() {
          for line in text.lines() {
-            let t = line.trim();
-            if !t.is_empty() {
-               return Some(truncate(t, 500));
+            let trimmed = line.trim();
+            if !trimmed.is_empty() {
+               return Some(truncate(trimmed, 500));
             }
          }
       }
@@ -523,20 +558,20 @@ fn extract_dsn_reason(raw: &[u8]) -> Option<String> {
    None
 }
 
-fn truncate(s: &str, max: usize) -> String {
-   if s.len() <= max {
-      return s.to_owned();
+fn truncate(text: &str, max: usize) -> String {
+   const ELLIPSIS: &str = "…";
+   if text.len() <= max {
+      return text.to_owned();
    }
    // Reserve room for the ellipsis before slicing so the final string
    // fits inside `max` bytes.
-   const ELLIPSIS: &str = "…";
    let budget = max.saturating_sub(ELLIPSIS.len());
-   let mut cut = budget.min(s.len());
-   while cut > 0 && !s.is_char_boundary(cut) {
+   let mut cut = budget.min(text.len());
+   while cut > 0 && !text.is_char_boundary(cut) {
       cut -= 1;
    }
    let mut out = String::with_capacity(cut + ELLIPSIS.len());
-   out.push_str(&s[..cut]);
+   out.push_str(&text[..cut]);
    out.push_str(ELLIPSIS);
    out
 }
@@ -544,16 +579,16 @@ fn truncate(s: &str, max: usize) -> String {
 fn extract_authentication_results(raw: &[u8]) -> Vec<String> {
    let hdr_end = raw
       .windows(4)
-      .position(|w| w == b"\r\n\r\n")
+      .position(|window| window == b"\r\n\r\n")
       .unwrap_or(raw.len());
-   let headers = std::str::from_utf8(&raw[..hdr_end]).unwrap_or("");
+   let headers = str::from_utf8(&raw[..hdr_end]).unwrap_or("");
    let mut lines = Vec::new();
    let mut current: Option<String> = None;
    for line in headers.split("\r\n") {
       if line.starts_with(' ') || line.starts_with('\t') {
-         if let Some(c) = current.as_mut() {
-            c.push(' ');
-            c.push_str(line.trim());
+         if let Some(buf) = current.as_mut() {
+            buf.push(' ');
+            buf.push_str(line.trim());
          }
          continue;
       }

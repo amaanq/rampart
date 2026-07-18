@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use anyhow::{
-   Context,
+   Context as _,
    Result,
    bail,
 };
@@ -12,10 +12,11 @@ use serde_json::{
    Value,
    json,
 };
+use tokio::time;
 
 use crate::domain_setup::DkimRecord;
 
-pub(crate) struct JmapClient {
+pub struct JmapClient {
    http:        reqwest::Client,
    base_url:    String,
    auth_header: String,
@@ -46,9 +47,9 @@ impl JmapClient {
                tracing::info!(attempt = i + 1, "jmap ready");
                return Ok(());
             },
-            Err(e) => {
-               tracing::warn!(attempt = i + 1, error = ?e, "jmap not ready yet");
-               tokio::time::sleep(Duration::from_secs(*secs)).await;
+            Err(err) => {
+               tracing::warn!(attempt = i + 1, error = ?err, "jmap not ready yet");
+               time::sleep(Duration::from_secs(*secs)).await;
             },
          }
       }
@@ -68,7 +69,7 @@ impl JmapClient {
       if !status.is_success() {
          bail!("jmap session: HTTP {status}");
       }
-      Ok(resp.json::<Value>().await.context("decode session json")?)
+      resp.json::<Value>().await.context("decode session json")
    }
 
    /// Send a single methodCalls envelope. Returns `methodResponses`.
@@ -98,12 +99,12 @@ impl JmapClient {
          let text = resp.text().await.unwrap_or_default();
          bail!("jmap: HTTP {status}: {text}");
       }
-      let v: Value = resp.json().await.context("decode jmap response")?;
-      let mr = v
+      let value: Value = resp.json().await.context("decode jmap response")?;
+      let mr = value
          .get("methodResponses")
          .and_then(|x| x.as_array())
          .cloned()
-         .ok_or_else(|| anyhow::anyhow!("jmap: no methodResponses in {v}"))?;
+         .ok_or_else(|| anyhow::anyhow!("jmap: no methodResponses in {value}"))?;
       Ok(mr)
    }
 
@@ -112,11 +113,11 @@ impl JmapClient {
    pub(super) fn first_body(responses: &[Value], expected: &str) -> Result<Value> {
       let inner = responses
          .first()
-         .and_then(|v| v.as_array())
+         .and_then(|value| value.as_array())
          .ok_or_else(|| anyhow::anyhow!("jmap: empty methodResponses"))?;
       let method = inner
          .first()
-         .and_then(|v| v.as_str())
+         .and_then(|value| value.as_str())
          .ok_or_else(|| anyhow::anyhow!("jmap: missing method name in response"))?;
       if method == "error" {
          let body = inner.get(1).cloned().unwrap_or(Value::Null);
@@ -150,10 +151,10 @@ impl JmapClient {
       let body = Self::first_body(&mr, &format!("x:{object}/query"))?;
       Ok(body
          .get("ids")
-         .and_then(|v| v.as_array())
-         .map(|a| {
-            a.iter()
-               .filter_map(|v| v.as_str().map(|s| s.to_owned()))
+         .and_then(|value| value.as_array())
+         .map(|arr| {
+            arr.iter()
+               .filter_map(|value| value.as_str().map(str::to_owned))
                .collect()
          })
          .unwrap_or_default())
@@ -168,8 +169,8 @@ impl JmapClient {
       ]]);
       let mr = self.call(calls).await?;
       let body = Self::first_body(&mr, &format!("x:{object}/get"))?;
-      let list = body.get("list").and_then(|v| v.as_array());
-      Ok(list.and_then(|a| a.first()).cloned())
+      let list = body.get("list").and_then(|value| value.as_array());
+      Ok(list.and_then(|arr| arr.first()).cloned())
    }
 
    /// DNS records for every active signing key on a named Domain.
@@ -224,7 +225,7 @@ impl JmapClient {
             value:     format!("v=DKIM1; k={algorithm}; h=sha256; p={public_key}"),
          });
       }
-      records.sort_by(|a, b| a.algorithm.cmp(&b.algorithm));
+      records.sort_by(|lhs, rhs| lhs.algorithm.cmp(&rhs.algorithm));
       Ok(records)
    }
 
@@ -237,16 +238,16 @@ impl JmapClient {
       ]]);
       let mr = self.call(calls).await?;
       let body = Self::first_body(&mr, &format!("x:{object}/set"))?;
-      if let Some(not_created) = body.get("notCreated").and_then(|v| v.as_object()) {
-         if !not_created.is_empty() {
-            bail!("jmap create failed: {not_created:?}");
-         }
+      if let Some(not_created) = body.get("notCreated").and_then(|value| value.as_object())
+         && !not_created.is_empty()
+      {
+         bail!("jmap create failed: {not_created:?}");
       }
       let id = body
          .get("created")
-         .and_then(|c| c.get("i0"))
-         .and_then(|v| v.get("id"))
-         .and_then(|v| v.as_str())
+         .and_then(|created| created.get("i0"))
+         .and_then(|value| value.get("id"))
+         .and_then(|value| value.as_str())
          .ok_or_else(|| anyhow::anyhow!("jmap: created.i0.id missing in {body}"))?
          .to_owned();
       Ok(id)
@@ -273,10 +274,10 @@ impl JmapClient {
       ]]);
       let mr = self.call(calls).await?;
       let body = Self::first_body(&mr, &format!("x:{object}/set"))?;
-      if let Some(not_updated) = body.get("notUpdated").and_then(|v| v.as_object()) {
-         if !not_updated.is_empty() {
-            bail!("jmap update failed: {not_updated:?}");
-         }
+      if let Some(not_updated) = body.get("notUpdated").and_then(|value| value.as_object())
+         && !not_updated.is_empty()
+      {
+         bail!("jmap update failed: {not_updated:?}");
       }
       Ok(())
    }
@@ -284,10 +285,10 @@ impl JmapClient {
    /// Destroy ids of the same type, chunked under stalwart's setMaxObjects
    /// (500).
    pub(super) async fn set_destroy(&self, object: &str, ids: &[String]) -> Result<()> {
+      const SET_CHUNK: usize = 256;
       if ids.is_empty() {
          return Ok(());
       }
-      const SET_CHUNK: usize = 256;
       for chunk in ids.chunks(SET_CHUNK) {
          let calls = json!([[
              format!("x:{object}/set"),
@@ -296,21 +297,21 @@ impl JmapClient {
          ]]);
          let mr = self.call(calls).await?;
          let body = Self::first_body(&mr, &format!("x:{object}/set"))?;
-         if let Some(not_destroyed) = body.get("notDestroyed").and_then(|v| v.as_object()) {
-            if !not_destroyed.is_empty() {
-               bail!("jmap destroy failed: {not_destroyed:?}");
-            }
+         if let Some(not_destroyed) = body.get("notDestroyed").and_then(|value| value.as_object())
+            && !not_destroyed.is_empty()
+         {
+            bail!("jmap destroy failed: {not_destroyed:?}");
          }
       }
       Ok(())
    }
 
-   /// Page DkimSignature ids by `domainId` past queryMaxResults.
+   /// Page `DkimSignature` ids by `domainId` past queryMaxResults.
    pub(super) async fn query_dkim_signatures_for(&self, domain_id: &str) -> Result<Vec<String>> {
-      let mut out: Vec<String> = Vec::new();
-      let mut position: u64 = 0;
       const QUERY_LIMIT: u64 = 256;
       const MAX_PAGES: u32 = 1024;
+      let mut out: Vec<String> = Vec::new();
+      let mut position: u64 = 0;
       for _ in 0..MAX_PAGES {
          let calls = json!([[
              "x:DkimSignature/query",
@@ -325,10 +326,10 @@ impl JmapClient {
          let body = Self::first_body(&mr, "x:DkimSignature/query")?;
          let ids: Vec<String> = body
             .get("ids")
-            .and_then(|v| v.as_array())
-            .map(|a| {
-               a.iter()
-                  .filter_map(|v| v.as_str().map(|s| s.to_owned()))
+            .and_then(|value| value.as_array())
+            .map(|arr| {
+               arr.iter()
+                  .filter_map(|value| value.as_str().map(str::to_owned))
                   .collect()
             })
             .unwrap_or_default();
@@ -379,19 +380,20 @@ impl JmapClient {
          // (first_body only checks responses[0]).
          let body = mr
             .iter()
-            .find(|v| {
-               v.as_array()
-                  .and_then(|a| a.first())
-                  .and_then(|m| m.as_str())
+            .find(|value| {
+               value
+                  .as_array()
+                  .and_then(|arr| arr.first())
+                  .and_then(|method| method.as_str())
                   == Some(get_method.as_str())
             })
-            .and_then(|v| v.as_array())
-            .and_then(|a| a.get(1))
+            .and_then(|value| value.as_array())
+            .and_then(|arr| arr.get(1))
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("jmap: missing {get_method} in chained response"))?;
          let list: Vec<Value> = body
             .get("list")
-            .and_then(|v| v.as_array())
+            .and_then(|value| value.as_array())
             .cloned()
             .unwrap_or_default();
          if list.is_empty() {
@@ -412,46 +414,54 @@ impl JmapClient {
 /// OBJECT keyed by stringified positional indexes; arrays silently drop
 /// branches.
 pub(super) fn build_expression(branches: Vec<(String, String)>, else_expr: &str) -> Value {
-   let mut m = serde_json::Map::new();
+   let mut map = serde_json::Map::new();
    for (i, (if_, then)) in branches.into_iter().enumerate() {
-      m.insert(i.to_string(), json!({ "if": if_, "then": then }));
+      map.insert(i.to_string(), json!({ "if": if_, "then": then }));
    }
-   json!({ "match": Value::Object(m), "else": else_expr })
+   json!({ "match": Value::Object(map), "else": else_expr })
 }
 
 /// Existing `match` branches. Accepts object and array forms.
 pub(super) fn read_match_branches(expr: Option<&Value>) -> Vec<(String, String)> {
-   let m = match expr.and_then(|v| v.get("match")) {
-      Some(m) => m,
-      None => return Vec::new(),
-   };
-   let extract = |b: &Value| -> Option<(String, String)> {
-      let if_ = b.get("if").and_then(|v| v.as_str())?.to_owned();
-      let then = b.get("then").and_then(|v| v.as_str())?.to_owned();
+   fn extract(branch: &Value) -> Option<(String, String)> {
+      let if_ = branch
+         .get("if")
+         .and_then(|value| value.as_str())?
+         .to_owned();
+      let then = branch
+         .get("then")
+         .and_then(|value| value.as_str())?
+         .to_owned();
       Some((if_, then))
-   };
-   if let Some(obj) = m.as_object() {
-      // Numeric sort — string sort puts "10" before "2".
-      let mut entries: Vec<(usize, &Value)> = obj
-         .iter()
-         .filter_map(|(k, v)| k.parse::<usize>().ok().map(|i| (i, v)))
-         .collect();
-      entries.sort_by_key(|(i, _)| *i);
-      entries
-         .into_iter()
-         .filter_map(|(_, v)| extract(v))
-         .collect()
-   } else if let Some(arr) = m.as_array() {
-      arr.iter().filter_map(extract).collect()
-   } else {
-      Vec::new()
    }
+   let Some(match_obj) = expr.and_then(|value| value.get("match")) else {
+      return Vec::new();
+   };
+   match_obj.as_object().map_or_else(
+      || {
+         match_obj
+            .as_array()
+            .map_or_else(Vec::new, |arr| arr.iter().filter_map(extract).collect())
+      },
+      |obj| {
+         // Numeric sort — string sort puts "10" before "2".
+         let mut entries: Vec<(usize, &Value)> = obj
+            .iter()
+            .filter_map(|(key, value)| key.parse::<usize>().ok().map(|i| (i, value)))
+            .collect();
+         entries.sort_by_key(|&(i, _)| i);
+         entries
+            .into_iter()
+            .filter_map(|(_, value)| extract(value))
+            .collect()
+      },
+   )
 }
 
 pub(super) fn read_else(expr: Option<&Value>, fallback: &str) -> String {
    expr
-      .and_then(|v| v.get("else"))
-      .and_then(|v| v.as_str())
+      .and_then(|value| value.get("else"))
+      .and_then(|value| value.as_str())
       .unwrap_or(fallback)
       .to_owned()
 }

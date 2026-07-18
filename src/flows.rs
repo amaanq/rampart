@@ -9,7 +9,7 @@
 //! sha256 so a DB leak doesn't yield click-through credentials.
 
 use anyhow::{
-   Context,
+   Context as _,
    Result,
 };
 use data_encoding::BASE64URL_NOPAD;
@@ -21,20 +21,28 @@ use rampart_codegen::queries::{
    tokens,
    users,
 };
-use rand::TryRngCore;
+use rand::{
+   TryRng as _,
+   rngs::SysRng,
+};
 use time::{
    Duration,
    OffsetDateTime,
 };
+use tokio_postgres::error::SqlState;
 
 use crate::{
-   auth::hash_password,
+   auth::{
+      self,
+      VerifyCache,
+   },
    mailer::Mailer,
 };
 
 pub const DEFAULT_TOKEN_TTL_HOURS: i64 = 1;
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum InviteSignupError {
    #[error("password must be at least 10 characters")]
    PasswordTooShort,
@@ -53,6 +61,7 @@ pub enum InviteSignupError {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum PasswordResetError {
    #[error("password must be at least 10 characters")]
    PasswordTooShort,
@@ -67,6 +76,7 @@ pub enum PasswordResetError {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum StartEmailChangeError {
    #[error("email already registered to another user")]
    AlreadyRegistered,
@@ -75,6 +85,7 @@ pub enum StartEmailChangeError {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum EmailChangeError {
    #[error("email change token is invalid")]
    Invalid,
@@ -89,6 +100,7 @@ pub enum EmailChangeError {
 }
 
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum MailboxVerifyError {
    #[error("mailbox verification token is invalid")]
    Invalid,
@@ -101,10 +113,10 @@ pub enum MailboxVerifyError {
 }
 
 fn generate_token() -> (String, Vec<u8>) {
-   let mut bytes = [0u8; 24];
-   rand::rngs::OsRng
+   let mut bytes = [0_u8; 24];
+   SysRng
       .try_fill_bytes(&mut bytes)
-      .expect("OsRng must not fail");
+      .expect("SysRng must not fail");
    let token = BASE64URL_NOPAD.encode(&bytes);
    let hash = Hash::hash(token.as_bytes()).to_vec();
    (token, hash)
@@ -114,16 +126,25 @@ fn hash_token(token: &str) -> Vec<u8> {
    Hash::hash(token.as_bytes()).to_vec()
 }
 
-/// Advisory-lock key serializing concurrent /setup POSTs. INSERT ... WHERE
-/// NOT EXISTS under READ COMMITTED only guarantees per-statement atomicity;
-/// two concurrent statements take independent snapshots, both see an empty
-/// user table, both insert. We funnel them through `pg_advisory_xact_lock`.
-pub const FIRST_ADMIN_LOCK_KEY: i64 = 0x52414D505F464131; // "RAMP_FA1"
+/// Advisory-lock key serializing concurrent /setup POSTs.
+///
+/// INSERT ... WHERE NOT EXISTS under READ COMMITTED only guarantees
+/// per-statement atomicity; two concurrent statements take independent
+/// snapshots, both see an empty user table, both insert. We funnel them
+/// through `pg_advisory_xact_lock`.
+pub const FIRST_ADMIN_LOCK_KEY: i64 = 0x5241_4D50_5F46_4131; // "RAMP_FA1"
 
-/// First-run admin bootstrap. Creates a user with `is_admin = true` only
-/// if no user exists yet. Race-safe via `FIRST_ADMIN_LOCK_KEY` —
-/// concurrent setup POSTs serialize against the lock, then the inner
-/// `INSERT ... WHERE NOT EXISTS` guard returns `Ok(None)` for the loser.
+/// First-run admin bootstrap.
+///
+/// Creates a user with `is_admin = true` only if no user exists yet.
+/// Race-safe via `FIRST_ADMIN_LOCK_KEY` — concurrent setup POSTs serialize
+/// against the lock, then the inner `INSERT ... WHERE NOT EXISTS` guard
+/// returns `Ok(None)` for the loser.
+///
+/// # Errors
+///
+/// Returns an error if the password is shorter than 10 characters or if a
+/// database operation fails.
 pub async fn bootstrap_first_admin(
    pool: &Pool,
    email: &str,
@@ -133,9 +154,9 @@ pub async fn bootstrap_first_admin(
    if password.len() < 10 {
       anyhow::bail!("password must be at least 10 characters");
    }
-   let password_hash = hash_password(password)?;
-   let mut c = pool.get().await?;
-   let txn = c.transaction().await?;
+   let password_hash = auth::hash_password(password)?;
+   let mut conn = pool.get().await?;
+   let txn = conn.transaction().await?;
    txn.execute("SET LOCAL idle_in_transaction_session_timeout = 0", &[])
       .await
       .context("disable idle-in-txn timeout for first-admin lock")?;
@@ -153,19 +174,26 @@ pub async fn bootstrap_first_admin(
    Ok(id)
 }
 
+/// Claim an invite token and create the associated user.
+///
+/// # Errors
+///
+/// Returns [`InviteSignupError`] if the password is too short, the invite is
+/// invalid/expired/already-used, the email doesn't match the invite, the email
+/// is already registered, or a database operation fails.
 pub async fn claim_invite_and_create_user(
    pool: &Pool,
    token: &str,
    email: &str,
    password: &str,
    display_name: Option<&str>,
-) -> std::result::Result<(i64, bool), InviteSignupError> {
+) -> Result<(i64, bool), InviteSignupError> {
    if password.len() < 10 {
       return Err(InviteSignupError::PasswordTooShort);
    }
    let token_hash = hash_token(token);
-   let mut c = pool.get().await.context("opening invite transaction")?;
-   let txn = c
+   let mut conn = pool.get().await.context("opening invite transaction")?;
+   let txn = conn
       .transaction()
       .await
       .context("starting invite transaction")?;
@@ -181,29 +209,28 @@ pub async fn claim_invite_and_create_user(
          .opt()
          .await
          .context("inspecting invite failure")?;
-      txn.rollback().await.ok();
+      let _ = txn.rollback().await;
       return Err(match failure {
-         None => InviteSignupError::Invalid,
          Some(failure) if failure.used => InviteSignupError::AlreadyUsed,
          Some(failure) if failure.expired => InviteSignupError::Expired,
          Some(failure) if failure.email_mismatch => InviteSignupError::EmailMismatch,
-         Some(_) => InviteSignupError::Invalid,
+         _ => InviteSignupError::Invalid,
       });
    }
 
-   let password_hash = hash_password(password).context("hashing invite password")?;
+   let password_hash = auth::hash_password(password).context("hashing invite password")?;
 
    let row = users::create_via_invite()
       .bind(&txn, &email, &password_hash, &display_name)
       .one()
       .await
-      .map_err(|e| {
-         if let Some(db) = e.as_db_error() {
-            if db.code() == &tokio_postgres::error::SqlState::UNIQUE_VIOLATION {
-               return InviteSignupError::AlreadyRegistered;
-            }
+      .map_err(|err| {
+         if let Some(db) = err.as_db_error()
+            && db.code() == &SqlState::UNIQUE_VIOLATION
+         {
+            return InviteSignupError::AlreadyRegistered;
          }
-         InviteSignupError::Internal(e.into())
+         InviteSignupError::Internal(err.into())
       })?;
    let user_id = row.id;
    let is_admin = row.is_admin;
@@ -217,21 +244,26 @@ pub async fn claim_invite_and_create_user(
    Ok((user_id, is_admin))
 }
 
+/// Start a password-reset flow by emailing a single-use token link.
+///
+/// # Errors
+///
+/// Returns an error if a database operation or sending the email fails.
 pub async fn start_password_reset(
    pool: &Pool,
    mailer: &dyn Mailer,
    public_origin: &str,
    email: &str,
 ) -> Result<()> {
-   let c = pool.get().await?;
-   let Some(user_id) = users::by_email_id().bind(&c, &email).opt().await? else {
+   let conn = pool.get().await?;
+   let Some(user_id) = users::by_email_id().bind(&conn, &email).opt().await? else {
       tracing::info!(email, "forgot-password: no matching user (silent)");
       return Ok(());
    };
    let (token, hash) = generate_token();
    let expires = OffsetDateTime::now_utc() + Duration::hours(DEFAULT_TOKEN_TTL_HOURS);
    tokens::password_reset_create()
-      .bind(&c, &hash, &user_id, &expires)
+      .bind(&conn, &hash, &user_id, &expires)
       .await?;
 
    let link = format!("{public_origin}/auth/reset/{token}");
@@ -248,19 +280,25 @@ pub async fn start_password_reset(
    Ok(())
 }
 
+/// Apply a password reset given a valid token and new password.
+///
+/// # Errors
+///
+/// Returns [`PasswordResetError`] if the new password is too short, the token
+/// is invalid/expired/already-used, or a database operation fails.
 pub async fn apply_password_reset(
    pool: &Pool,
-   verify_cache: &crate::auth::VerifyCache,
+   verify_cache: &VerifyCache,
    token: &str,
    new_password: &str,
-) -> std::result::Result<(), PasswordResetError> {
+) -> Result<(), PasswordResetError> {
    if new_password.len() < 10 {
       return Err(PasswordResetError::PasswordTooShort);
    }
-   let mut c = pool.get().await.context("opening password reset")?;
+   let mut conn = pool.get().await.context("opening password reset")?;
    let hash = hash_token(token);
 
-   let txn = c
+   let txn = conn
       .transaction()
       .await
       .context("starting password reset transaction")?;
@@ -275,16 +313,15 @@ pub async fn apply_password_reset(
          .opt()
          .await
          .context("inspecting password reset failure")?;
-      txn.rollback().await.ok();
+      let _ = txn.rollback().await;
       return Err(match failure {
-         None => PasswordResetError::Invalid,
          Some(failure) if failure.used => PasswordResetError::AlreadyUsed,
          Some(failure) if failure.expired => PasswordResetError::Expired,
-         Some(_) => PasswordResetError::Invalid,
+         _ => PasswordResetError::Invalid,
       });
    };
 
-   let pw_hash = hash_password(new_password).context("hashing reset password")?;
+   let pw_hash = auth::hash_password(new_password).context("hashing reset password")?;
 
    users::set_password()
       .bind(&txn, &Some(pw_hash), &user_id)
@@ -301,16 +338,23 @@ pub async fn apply_password_reset(
    Ok(())
 }
 
+/// Start an email-change flow by emailing a confirmation link to the new
+/// address.
+///
+/// # Errors
+///
+/// Returns [`StartEmailChangeError`] if the new email is already registered to
+/// another user, or a database/email operation fails.
 pub async fn start_email_change(
    pool: &Pool,
    mailer: &dyn Mailer,
    public_origin: &str,
    user_id: i64,
    new_email: &str,
-) -> std::result::Result<(), StartEmailChangeError> {
-   let c = pool.get().await.context("opening email change request")?;
+) -> Result<(), StartEmailChangeError> {
+   let conn = pool.get().await.context("opening email change request")?;
    let existing = users::email_exists_for_other()
-      .bind(&c, &new_email, &user_id)
+      .bind(&conn, &new_email, &user_id)
       .opt()
       .await
       .context("checking email availability")?;
@@ -320,7 +364,7 @@ pub async fn start_email_change(
    let (token, hash) = generate_token();
    let expires = OffsetDateTime::now_utc() + Duration::hours(DEFAULT_TOKEN_TTL_HOURS);
    tokens::email_change_create()
-      .bind(&c, &hash, &user_id, &new_email, &expires)
+      .bind(&conn, &hash, &user_id, &new_email, &expires)
       .await
       .context("creating email change token")?;
    let link = format!("{public_origin}/auth/change-email/{token}");
@@ -337,13 +381,16 @@ pub async fn start_email_change(
    Ok(())
 }
 
-pub async fn apply_email_change(
-   pool: &Pool,
-   token: &str,
-) -> std::result::Result<String, EmailChangeError> {
-   let mut c = pool.get().await.context("opening email change")?;
+/// Apply an email change given a valid token, returning the new email.
+///
+/// # Errors
+///
+/// Returns [`EmailChangeError`] if the token is invalid/expired/already-used,
+/// the email is already registered, or a database operation fails.
+pub async fn apply_email_change(pool: &Pool, token: &str) -> Result<String, EmailChangeError> {
+   let mut conn = pool.get().await.context("opening email change")?;
    let hash = hash_token(token);
-   let txn = c
+   let txn = conn
       .transaction()
       .await
       .context("starting email change transaction")?;
@@ -358,12 +405,11 @@ pub async fn apply_email_change(
          .opt()
          .await
          .context("inspecting email change failure")?;
-      txn.rollback().await.ok();
+      let _ = txn.rollback().await;
       return Err(match failure {
-         None => EmailChangeError::Invalid,
          Some(failure) if failure.used => EmailChangeError::AlreadyUsed,
          Some(failure) if failure.expired => EmailChangeError::Expired,
-         Some(_) => EmailChangeError::Invalid,
+         _ => EmailChangeError::Invalid,
       });
    };
    let user_id = claimed.user_id;
@@ -371,28 +417,34 @@ pub async fn apply_email_change(
    users::set_email()
       .bind(&txn, &new_email, &user_id)
       .await
-      .map_err(|e| {
-         if let Some(db) = e.as_db_error() {
-            if db.code() == &tokio_postgres::error::SqlState::UNIQUE_VIOLATION {
-               return EmailChangeError::AlreadyRegistered;
-            }
+      .map_err(|err| {
+         if let Some(db) = err.as_db_error()
+            && db.code() == &SqlState::UNIQUE_VIOLATION
+         {
+            return EmailChangeError::AlreadyRegistered;
          }
-         EmailChangeError::Internal(e.into())
+         EmailChangeError::Internal(err.into())
       })?;
    txn.commit().await.context("committing email change")?;
    tracing::info!(user_id, new_email, "email changed");
    Ok(new_email)
 }
 
+/// Start a mailbox-verification flow by emailing a confirmation link.
+///
+/// # Errors
+///
+/// Returns an error if the mailbox is not found, or a database/email operation
+/// fails.
 pub async fn start_mailbox_verify(
    pool: &Pool,
    mailer: &dyn Mailer,
    public_origin: &str,
    mailbox_id: i64,
 ) -> Result<()> {
-   let c = pool.get().await?;
+   let conn = pool.get().await?;
    let Some(mb) = mailboxes::email_and_verified()
-      .bind(&c, &mailbox_id)
+      .bind(&conn, &mailbox_id)
       .opt()
       .await?
    else {
@@ -405,7 +457,7 @@ pub async fn start_mailbox_verify(
    let (token, hash) = generate_token();
    let expires = OffsetDateTime::now_utc() + Duration::hours(24);
    tokens::mailbox_verify_create()
-      .bind(&c, &hash, &mailbox_id, &expires)
+      .bind(&conn, &hash, &mailbox_id, &expires)
       .await?;
    let link = format!("{public_origin}/mailbox/verify/{token}");
    let body = format!(
@@ -419,13 +471,16 @@ pub async fn start_mailbox_verify(
    Ok(())
 }
 
-pub async fn apply_mailbox_verify(
-   pool: &Pool,
-   token: &str,
-) -> std::result::Result<i64, MailboxVerifyError> {
-   let mut c = pool.get().await.context("opening mailbox verification")?;
+/// Apply a mailbox verification given a valid token, returning the mailbox id.
+///
+/// # Errors
+///
+/// Returns [`MailboxVerifyError`] if the token is invalid/expired/already-used,
+/// or a database operation fails.
+pub async fn apply_mailbox_verify(pool: &Pool, token: &str) -> Result<i64, MailboxVerifyError> {
+   let mut conn = pool.get().await.context("opening mailbox verification")?;
    let hash = hash_token(token);
-   let txn = c
+   let txn = conn
       .transaction()
       .await
       .context("starting mailbox verification transaction")?;
@@ -440,12 +495,11 @@ pub async fn apply_mailbox_verify(
          .opt()
          .await
          .context("inspecting mailbox verification failure")?;
-      txn.rollback().await.ok();
+      let _ = txn.rollback().await;
       return Err(match failure {
-         None => MailboxVerifyError::Invalid,
          Some(failure) if failure.used => MailboxVerifyError::AlreadyUsed,
          Some(failure) if failure.expired => MailboxVerifyError::Expired,
-         Some(_) => MailboxVerifyError::Invalid,
+         _ => MailboxVerifyError::Invalid,
       });
    };
    mailboxes::set_verified()
