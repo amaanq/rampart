@@ -94,9 +94,9 @@ pub(super) async fn user_start_email_change(
     Extension(p): Extension<Principal>,
     Json(body): Json<ChangeEmailRequest>,
 ) -> ApiResult<StatusCode> {
-    if !body.new_email.contains('@') {
-        return Err(ApiError::BadRequest("email must contain @".into()));
-    }
+    use std::str::FromStr;
+    lettre::Address::from_str(&body.new_email)
+        .map_err(|_| ApiError::BadRequest("Enter a valid email address.".into()))?;
     let ok = crate::abuse::check(
         &state.pool,
         &format!("email_change:{}", p.user_id),
@@ -117,6 +117,11 @@ pub(super) async fn user_start_email_change(
         &body.new_email,
     )
     .await
-    .map_err(ApiError::Internal)?;
+    .map_err(|error| match error {
+        crate::flows::StartEmailChangeError::AlreadyRegistered => {
+            ApiError::Conflict("An account already uses this email address.".into())
+        }
+        crate::flows::StartEmailChangeError::Internal(error) => ApiError::Internal(error),
+    })?;
     Ok(StatusCode::ACCEPTED)
 }

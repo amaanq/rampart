@@ -1,6 +1,6 @@
 use askama::Template;
 use axum::{
-    Form, Router,
+    Form, Json, Router,
     extract::{Path, Query},
     http::{HeaderValue, StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
@@ -18,10 +18,6 @@ use crate::web::{AliasRowView, DomainRowView, MailboxSummaryView};
 use rampart_codegen::queries::{
     contacts as cq, domains as dq, email_log as elq, mailboxes as mbq, users as uq, webauthn as wq,
 };
-
-fn ts() -> OffsetDateTime {
-    OffsetDateTime::now_utc()
-}
 
 fn ts_ago(hours: i64) -> OffsetDateTime {
     OffsetDateTime::now_utc() - Duration::hours(hours)
@@ -830,8 +826,24 @@ async fn password_change() -> StatusCode {
     StatusCode::NO_CONTENT
 }
 
-async fn email_change() -> StatusCode {
-    StatusCode::ACCEPTED
+#[derive(Deserialize)]
+struct PreviewEmailChange {
+    new_email: String,
+}
+
+async fn email_change(Json(body): Json<PreviewEmailChange>) -> Response {
+    if body.new_email == "taken@example.com" {
+        return (
+            StatusCode::CONFLICT,
+            "An account already uses this email address.",
+        )
+            .into_response();
+    }
+    use std::str::FromStr;
+    if lettre::Address::from_str(&body.new_email).is_err() {
+        return (StatusCode::BAD_REQUEST, "Enter a valid email address.").into_response();
+    }
+    StatusCode::ACCEPTED.into_response()
 }
 
 async fn verification_sent() -> StatusCode {

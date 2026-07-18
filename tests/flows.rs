@@ -10,8 +10,8 @@ use hmac_sha256::Hash;
 use rampart::auth::VerifyCache;
 use rampart::flows::{
     EmailChangeError, InviteSignupError, MailboxVerifyError, PasswordResetError,
-    apply_email_change, apply_mailbox_verify, apply_password_reset, claim_invite_and_create_user,
-    start_email_change, start_mailbox_verify, start_password_reset,
+    StartEmailChangeError, apply_email_change, apply_mailbox_verify, apply_password_reset,
+    claim_invite_and_create_user, start_email_change, start_mailbox_verify, start_password_reset,
 };
 use rampart::mailer::MemoryMailer;
 use time::{Duration, OffsetDateTime};
@@ -130,6 +130,29 @@ async fn email_change_round_trip() {
         .unwrap();
     let e: String = row.get("email");
     assert_eq!(e, "alice2@test");
+
+    db.teardown().await;
+}
+
+#[tokio::test]
+async fn email_change_rejects_registered_address() {
+    let db = test_db!();
+    let uid = {
+        let c = db.pool.get().await.unwrap();
+        let uid = seed_user(&c, "alice@test").await;
+        seed_user(&c, "taken@test").await;
+        uid
+    };
+    let error = start_email_change(
+        &db.pool,
+        &MemoryMailer::new(),
+        "http://localhost",
+        uid,
+        "taken@test",
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(error, StartEmailChangeError::AlreadyRegistered));
 
     db.teardown().await;
 }

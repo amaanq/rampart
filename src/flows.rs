@@ -54,6 +54,14 @@ pub enum PasswordResetError {
 }
 
 #[derive(Debug, thiserror::Error)]
+pub enum StartEmailChangeError {
+    #[error("email already registered to another user")]
+    AlreadyRegistered,
+    #[error(transparent)]
+    Internal(#[from] anyhow::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
 pub enum EmailChangeError {
     #[error("email change token is invalid")]
     Invalid,
@@ -287,20 +295,22 @@ pub async fn start_email_change(
     public_origin: &str,
     user_id: i64,
     new_email: &str,
-) -> Result<()> {
-    let c = pool.get().await?;
+) -> std::result::Result<(), StartEmailChangeError> {
+    let c = pool.get().await.context("opening email change request")?;
     let existing = users::email_exists_for_other()
         .bind(&c, &new_email, &user_id)
         .opt()
-        .await?;
+        .await
+        .context("checking email availability")?;
     if existing.is_some() {
-        anyhow::bail!("email already registered to another user");
+        return Err(StartEmailChangeError::AlreadyRegistered);
     }
     let (token, hash) = generate_token();
     let expires = OffsetDateTime::now_utc() + Duration::hours(DEFAULT_TOKEN_TTL_HOURS);
     tokens::email_change_create()
         .bind(&c, &hash, &user_id, &new_email, &expires)
-        .await?;
+        .await
+        .context("creating email change token")?;
     let link = format!("{public_origin}/auth/change-email/{token}");
     let body = format!(
         "Hi,\n\nSomeone (probably you) requested to change your rampart account email to {new_email}.\n\
@@ -309,7 +319,8 @@ pub async fn start_email_change(
     );
     mailer
         .send(new_email, "rampart email change — please confirm", &body)
-        .await?;
+        .await
+        .context("sending email change confirmation")?;
     tracing::info!(user_id, new_email, "sent email-change confirmation");
     Ok(())
 }

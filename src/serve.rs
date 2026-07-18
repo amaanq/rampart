@@ -1008,17 +1008,6 @@ fn render_simple_message(
     }
 }
 
-fn render_error(msg: &str) -> Response {
-    render_simple_message(
-        StatusCode::BAD_REQUEST,
-        "Something went wrong",
-        msg,
-        true,
-        "/",
-        "Back to rampart",
-    )
-}
-
 #[derive(Deserialize)]
 struct PasskeyStartReq {
     email: String,
