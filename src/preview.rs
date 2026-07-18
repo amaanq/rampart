@@ -709,7 +709,13 @@ async fn aliases_page(Query(query): Query<PreviewAliasesQuery>) -> Response {
     })
 }
 
-async fn mailboxes_page() -> Response {
+#[derive(Default, Deserialize)]
+struct PreviewMailboxesQuery {
+    #[serde(default)]
+    empty: bool,
+}
+
+async fn mailboxes_page(Query(query): Query<PreviewMailboxesQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "mailboxes.html")]
     struct Page {
@@ -718,7 +724,11 @@ async fn mailboxes_page() -> Response {
         is_admin: bool,
     }
     render(&Page {
-        mailboxes: mock_mailboxes(),
+        mailboxes: if query.empty {
+            vec![]
+        } else {
+            mock_mailboxes()
+        },
         user_email: user_email(),
         is_admin: is_admin(),
     })
