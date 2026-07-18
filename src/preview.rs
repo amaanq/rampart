@@ -454,6 +454,21 @@ async fn mailbox_verify_page(Path(token): Path<String>) -> Response {
     confirm_page(token, "verify").await
 }
 
+async fn mailbox_verify_post() -> Response {
+    #[derive(Template)]
+    #[template(path = "simple_message.html")]
+    struct SimpleMessage<'a> {
+        heading: &'a str,
+        message: &'a str,
+        show_back: bool,
+    }
+    render(&SimpleMessage {
+        heading: "Mailbox verified",
+        message: "You can close this page and return to rampart.",
+        show_back: false,
+    })
+}
+
 async fn setup_page() -> Response {
     #[derive(Template)]
     #[template(path = "setup.html")]
@@ -644,7 +659,10 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
         .route("/auth/forgot", get(forgot_page))
         .route("/auth/reset/{token}", get(reset_page))
         .route("/auth/change-email/{token}", get(change_email_page))
-        .route("/mailbox/verify/{token}", get(mailbox_verify_page))
+        .route(
+            "/mailbox/verify/{token}",
+            get(mailbox_verify_page).post(mailbox_verify_post),
+        )
         .route("/setup", get(setup_page))
         .route("/", get(aliases_page))
         .route("/mailboxes", get(mailboxes_page))
