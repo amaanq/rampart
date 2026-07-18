@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>rampart — sign in</title>
     <link rel="stylesheet" href="/static/app.css?v=20260716">
+    <script src="/static/auth.js?v=20260718" defer></script>
     <script src="/static/webauthn.js?v=20260716" defer></script>
 </head>
 <body>
@@ -18,7 +19,7 @@
         {% if let Some(e) = error %}
         <p class="auth-error" role="alert">{{ e }}</p>
         {% endif %}
-        <form method="post" action="/login" class="auth-form">
+        <form method="post" action="/login" class="auth-form" data-native-submit data-pending-label="Signing in…">
             <input type="hidden" name="next" value="{{ next }}">
             <label for="email">Email</label>
             <input id="email" name="email" type="email" autocomplete="username" autofocus required>

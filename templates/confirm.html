@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>rampart — {{ title }}</title>
     <link rel="stylesheet" href="/static/app.css?v=20260716">
+    <script src="/static/auth.js?v=20260718" defer></script>
 </head>
 <body>
 <main class="auth">
@@ -12,7 +13,7 @@
     <section class="auth-card">
         <h1>{{ title }}</h1>
         <p class="auth-copy">{{ body }}</p>
-        <form method="post" action="{{ action }}" class="auth-form">
+        <form method="post" action="{{ action }}" class="auth-form" data-native-submit data-pending-label="{{ pending_label }}">
             <button type="submit" class="auth-submit">{{ button_label }}</button>
         </form>
     </section>

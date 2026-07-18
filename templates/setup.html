@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>rampart — first-run setup</title>
     <link rel="stylesheet" href="/static/app.css?v=20260716">
+    <script src="/static/auth.js?v=20260718" defer></script>
 </head>
 <body>
 <main class="auth">
@@ -17,7 +18,7 @@
         {% if let Some(e) = error %}
         <p class="auth-error" role="alert">{{ e }}</p>
         {% endif %}
-        <form method="post" action="/setup" class="auth-form">
+        <form method="post" action="/setup" class="auth-form" data-native-submit data-pending-label="Creating admin…">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <label for="email">Email</label>
             <input id="email" name="email" type="email" autocomplete="username" autofocus required>

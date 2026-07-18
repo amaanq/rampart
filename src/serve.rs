@@ -810,6 +810,7 @@ async fn change_email_page(Path(token): Path<String>) -> Response {
         body: &'a str,
         action: &'a str,
         button_label: &'a str,
+        pending_label: &'a str,
     }
     render_or_err(
         (ConfirmPage {
@@ -817,6 +818,7 @@ async fn change_email_page(Path(token): Path<String>) -> Response {
             body: "Change your rampart account email to the address this message was sent to.",
             action: &format!("/auth/change-email/{token}"),
             button_label: "Change email",
+            pending_label: "Changing email…",
         })
         .render(),
     )
@@ -879,6 +881,7 @@ async fn mailbox_verify_page(Path(token): Path<String>) -> Response {
         body: &'a str,
         action: &'a str,
         button_label: &'a str,
+        pending_label: &'a str,
     }
     render_or_err(
         (ConfirmPage {
@@ -886,6 +889,7 @@ async fn mailbox_verify_page(Path(token): Path<String>) -> Response {
             body: "Confirm that you own the mailbox this message was sent to.",
             action: &format!("/mailbox/verify/{token}"),
             button_label: "Verify mailbox",
+            pending_label: "Verifying mailbox…",
         })
         .render(),
     )

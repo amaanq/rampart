@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>rampart — reset password</title>
     <link rel="stylesheet" href="/static/app.css?v=20260716">
+    <script src="/static/auth.js?v=20260718" defer></script>
 </head>
 <body>
 <main class="auth">
@@ -12,7 +13,7 @@
     <section class="auth-card">
         <h1>Set new password</h1>
         {% if let Some(e) = error %}<p class="auth-error" role="alert">{{ e }}</p>{% endif %}
-        <form method="post" action="/auth/reset/{{ token }}" class="auth-form">
+        <form method="post" action="/auth/reset/{{ token }}" class="auth-form" data-native-submit data-pending-label="Changing password…">
             <label for="password">New password <span class="auth-optional">(min 10 chars)</span></label>
             <input id="password" name="password" type="password" autocomplete="new-password" minlength="10" required autofocus>
             <button type="submit" class="auth-submit">Set password</button>

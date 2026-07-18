@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>rampart — forgot password</title>
     <link rel="stylesheet" href="/static/app.css?v=20260716">
+    <script src="/static/auth.js?v=20260718" defer></script>
 </head>
 <body>
 <main class="auth">
@@ -17,7 +18,7 @@
         {% else %}
             <h1>Reset password</h1>
             {% if let Some(e) = error %}<p class="auth-error" role="alert">{{ e }}</p>{% endif %}
-            <form method="post" action="/auth/forgot" class="auth-form">
+            <form method="post" action="/auth/forgot" class="auth-form" data-native-submit data-pending-label="Sending reset link…">
                 <label for="email">Email</label>
                 <input id="email" name="email" type="email" value="{{ email }}" autocomplete="username" autofocus required>
                 <button type="submit" class="auth-submit">Send reset link</button>

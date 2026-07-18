@@ -472,6 +472,9 @@ async fn forgot_post(Form(form): Form<PreviewForgotForm>) -> Response {
             &form.email,
         );
     }
+    if form.email == "slow@preview.test" {
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    }
     render_forgot_page(true, None, "")
 }
 
@@ -518,25 +521,29 @@ async fn confirm_page(token: String, which: &str) -> Response {
         body: &'a str,
         action: &'a str,
         button_label: &'a str,
+        pending_label: &'a str,
     }
-    let (title, body, action, button_label) = match which {
+    let (title, body, action, button_label, pending_label) = match which {
         "change-email" => (
             "Confirm email change",
             "Change your rampart account email to the address this message was sent to.",
             format!("/auth/change-email/{token}"),
             "Change email",
+            "Changing email…",
         ),
         "verify" => (
             "Verify mailbox",
             "Confirm that you own the mailbox this message was sent to.",
             format!("/mailbox/verify/{token}"),
             "Verify mailbox",
+            "Verifying mailbox…",
         ),
         _ => (
             "Confirm action",
             "Confirm this action.",
             format!("/auth/{which}/{token}"),
             "Confirm",
+            "Confirming…",
         ),
     };
     render(&ConfirmPage {
@@ -544,6 +551,7 @@ async fn confirm_page(token: String, which: &str) -> Response {
         body,
         action: &action,
         button_label,
+        pending_label,
     })
 }
 
