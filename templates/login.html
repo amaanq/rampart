@@ -12,6 +12,9 @@
     <a href="/" class="brand">rampart</a>
     <section class="auth-card">
         <h1>Sign in</h1>
+        {% if password_reset %}
+        <p class="auth-success" role="status">Password changed. Sign in with your new password.</p>
+        {% endif %}
         {% if let Some(e) = error %}
         <p class="auth-error" role="alert">{{ e }}</p>
         {% endif %}

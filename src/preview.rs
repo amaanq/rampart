@@ -361,6 +361,8 @@ fn is_admin() -> bool {
 struct PreviewLoginQuery {
     #[serde(default)]
     next: String,
+    #[serde(default)]
+    reset: bool,
 }
 
 fn preview_login_destination(next: &str) -> &str {
@@ -381,10 +383,12 @@ async fn login_page(Query(query): Query<PreviewLoginQuery>) -> Response {
     struct LoginPage<'a> {
         error: Option<&'a str>,
         next: &'a str,
+        password_reset: bool,
     }
     render(&LoginPage {
         error: None,
         next: preview_login_destination(&query.next),
+        password_reset: query.reset,
     })
 }
 
@@ -468,6 +472,9 @@ async fn reset_page(Path(token): Path<String>) -> Response {
 }
 
 async fn reset_post(Path(token): Path<String>) -> Response {
+    if token == "success" {
+        return Redirect::to("/login?reset=true").into_response();
+    }
     let (heading, message) = match token.as_str() {
         "expired" => (
             "Reset link expired",

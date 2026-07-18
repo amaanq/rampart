@@ -146,6 +146,8 @@ async fn shutdown_signal() {
 struct LoginQuery {
     #[serde(default)]
     next: String,
+    #[serde(default)]
+    reset: bool,
 }
 
 fn login_destination(next: &str) -> &str {
@@ -173,10 +175,12 @@ async fn login_page(State(state): State<AppState>, Query(query): Query<LoginQuer
     struct LoginPage<'a> {
         error: Option<&'a str>,
         next: &'a str,
+        password_reset: bool,
     }
     match (LoginPage {
         error: None,
         next: login_destination(&query.next),
+        password_reset: query.reset,
     })
     .render()
     {
@@ -475,10 +479,12 @@ fn login_page_with_error(msg: &str, next: &str) -> Response {
     struct LoginPage<'a> {
         error: Option<&'a str>,
         next: &'a str,
+        password_reset: bool,
     }
     match (LoginPage {
         error: Some(msg),
         next: login_destination(next),
+        password_reset: false,
     })
     .render()
     {
@@ -756,7 +762,7 @@ async fn reset_post(
     )
     .await
     {
-        Ok(()) => Redirect::to("/login").into_response(),
+        Ok(()) => Redirect::to("/login?reset=true").into_response(),
         Err(crate::flows::PasswordResetError::PasswordTooShort) => render_reset_page(
             StatusCode::BAD_REQUEST,
             &token,

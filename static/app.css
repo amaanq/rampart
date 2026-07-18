@@ -144,6 +144,15 @@ main.auth .brand {
     color: var(--danger);
     font-size: .9em;
 }
+.auth-success {
+    margin: -.25rem 0 1rem;
+    padding: .55em .75em;
+    background: #eef8f0;
+    border: 1px solid #c7e7cf;
+    border-radius: 6px;
+    color: #2f7d44;
+    font-size: .9em;
+}
 .auth-copy {
     margin: 0 0 1.25rem;
     color: var(--muted);
