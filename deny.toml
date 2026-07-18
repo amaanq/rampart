@@ -22,15 +22,20 @@ allow = [
 	"BSL-1.0",
 	"CDLA-Permissive-2.0",
 	"OpenSSL",
+	"MPL-2.0",
+	"0BSD",
+	"AGPL-3.0-or-later",
 ]
 confidence-threshold = 0.9
+private = { ignore = true }
 version = 2
 
 [bans]
-deny              = [ { name = "native-tls" } ]
-highlight         = "all"
-multiple-versions = "warn"
-wildcards         = "deny"
+allow-wildcard-paths = true
+deny                 = [ { name = "native-tls" } ]
+highlight            = "all"
+multiple-versions    = "warn"
+wildcards            = "deny"
 
 [sources]
 allow-registry   = [ "https://github.com/rust-lang/crates.io-index" ]
