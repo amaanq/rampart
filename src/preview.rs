@@ -444,17 +444,35 @@ async fn signup_post(Path(token): Path<String>, Form(form): Form<PreviewSignupFo
     )
 }
 
-async fn forgot_page() -> Response {
+fn render_forgot_page(sent: bool, error: Option<&str>, email: &str) -> Response {
     #[derive(Template)]
     #[template(path = "forgot.html")]
     struct ForgotPage<'a> {
         sent: bool,
         error: Option<&'a str>,
+        email: &'a str,
     }
-    render(&ForgotPage {
-        sent: false,
-        error: None,
-    })
+    render(&ForgotPage { sent, error, email })
+}
+
+async fn forgot_page() -> Response {
+    render_forgot_page(false, None, "")
+}
+
+#[derive(Deserialize)]
+struct PreviewForgotForm {
+    email: String,
+}
+
+async fn forgot_post(Form(form): Form<PreviewForgotForm>) -> Response {
+    if form.email == "rate@limited.test" {
+        return render_forgot_page(
+            false,
+            Some("Too many reset requests. Try again later."),
+            &form.email,
+        );
+    }
+    render_forgot_page(true, None, "")
 }
 
 fn render_reset_page(token: &str, error: Option<&str>) -> Response {
@@ -772,7 +790,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
     let app = Router::new()
         .route("/login", get(login_page).post(login_post))
         .route("/signup/{token}", get(signup_page).post(signup_post))
-        .route("/auth/forgot", get(forgot_page))
+        .route("/auth/forgot", get(forgot_page).post(forgot_post))
         .route("/auth/reset/{token}", get(reset_page).post(reset_post))
         .route(
             "/auth/change-email/{token}",

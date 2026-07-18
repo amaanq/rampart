@@ -652,20 +652,27 @@ async fn signup_inner(
 }
 
 async fn forgot_page() -> Response {
+    render_forgot_page(StatusCode::OK, false, None, "")
+}
+
+fn render_forgot_page(
+    status: StatusCode,
+    sent: bool,
+    error: Option<&str>,
+    email: &str,
+) -> Response {
     use askama::Template;
     #[derive(Template)]
     #[template(path = "forgot.html")]
     struct ForgotPage<'a> {
         sent: bool,
         error: Option<&'a str>,
+        email: &'a str,
     }
-    render_or_err(
-        (ForgotPage {
-            sent: false,
-            error: None,
-        })
-        .render(),
-    )
+    match (ForgotPage { sent, error, email }).render() {
+        Ok(body) => (status, axum::response::Html(body)).into_response(),
+        Err(e) => ApiError::Template(e).into_response(),
+    }
 }
 
 #[derive(Deserialize)]
@@ -683,34 +690,30 @@ async fn forgot_post(
         format!("forgot:email:{}", form.email.to_lowercase()),
         format!("forgot:ip:{}", remote.ip()),
     ] {
-        if matches!(
-            crate::abuse::check(&state.pool, &key, crate::abuse::FORGOT_PASSWORD).await,
-            Ok(false)
-        ) {
-            return render_error("too many requests; try again later");
+        match crate::abuse::check(&state.pool, &key, crate::abuse::FORGOT_PASSWORD).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return render_forgot_page(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    false,
+                    Some("Too many reset requests. Try again later."),
+                    &form.email,
+                );
+            }
+            Err(error) => return ApiError::Internal(error).into_response(),
         }
     }
-    let _ = crate::flows::start_password_reset(
+    if let Err(error) = crate::flows::start_password_reset(
         &state.pool,
         state.mailer.as_ref(),
         &state.config.public_origin,
         &form.email,
     )
-    .await;
-    use askama::Template;
-    #[derive(Template)]
-    #[template(path = "forgot.html")]
-    struct ForgotPage<'a> {
-        sent: bool,
-        error: Option<&'a str>,
+    .await
+    {
+        tracing::error!(error = %error, "password reset request failed");
     }
-    render_or_err(
-        (ForgotPage {
-            sent: true,
-            error: None,
-        })
-        .render(),
-    )
+    render_forgot_page(StatusCode::OK, true, None, "")
 }
 
 async fn reset_page(Path(token): Path<String>) -> Response {
