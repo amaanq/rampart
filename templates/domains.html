@@ -16,6 +16,11 @@
 </section>
 <section>
     <h2>alias domains you can use</h2>
+    {% if domains.is_empty() %}
+    <div class="empty-state">
+        <p>No alias domains yet. Add one above to start creating aliases.</p>
+    </div>
+    {% else %}
     <table>
         <thead><tr><th>domain</th><th>kind</th><th>random prefix</th><th>reply prefix</th><th>aliases</th></tr></thead>
         <tbody>
@@ -30,5 +35,6 @@
         {%- endfor %}
         </tbody>
     </table>
+    {% endif %}
 </section>
 {% endblock %}

@@ -724,7 +724,13 @@ async fn mailboxes_page() -> Response {
     })
 }
 
-async fn domains_page() -> Response {
+#[derive(Default, Deserialize)]
+struct PreviewDomainsQuery {
+    #[serde(default)]
+    empty: bool,
+}
+
+async fn domains_page(Query(query): Query<PreviewDomainsQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "domains.html")]
     struct Page {
@@ -733,7 +739,7 @@ async fn domains_page() -> Response {
         is_admin: bool,
     }
     render(&Page {
-        domains: mock_domains(),
+        domains: if query.empty { vec![] } else { mock_domains() },
         user_email: user_email(),
         is_admin: is_admin(),
     })
