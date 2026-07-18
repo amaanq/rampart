@@ -18,7 +18,7 @@
         <p>No mailboxes yet. Add one above to receive forwarded mail.</p>
     </div>
     {% else %}
-    <table>
+    <table data-empty-message="No mailboxes yet. Add one above to receive forwarded mail.">
         <thead><tr><th>email</th><th>name</th><th>verified</th><th class="status-cell">enabled</th><th>aliases</th><th></th></tr></thead>
         <tbody>
         {%- for m in mailboxes %}

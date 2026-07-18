@@ -65,10 +65,21 @@ function removeRequestTarget(trigger) {
     const count = trigger.dataset.countTarget
         ? document.querySelector(trigger.dataset.countTarget)
         : null;
+    const table = target.closest('table');
     target.remove();
-    if (!count) return;
-    const value = Number.parseInt(count.textContent, 10);
-    if (Number.isFinite(value)) count.textContent = String(Math.max(0, value - 1));
+    if (count) {
+        const value = Number.parseInt(count.textContent, 10);
+        if (Number.isFinite(value)) count.textContent = String(Math.max(0, value - 1));
+    }
+    if (!table || table.querySelector('tbody tr')) return;
+    const message = table.dataset.emptyMessage;
+    if (!message) return;
+    const emptyState = document.createElement('div');
+    emptyState.className = 'empty-state';
+    const copy = document.createElement('p');
+    copy.textContent = message;
+    emptyState.appendChild(copy);
+    table.replaceWith(emptyState);
 }
 
 function toggleRequestTarget(trigger) {
@@ -145,6 +156,8 @@ document.body.addEventListener('htmx:beforeRequest', function (e) {
 });
 
 document.body.addEventListener('htmx:afterRequest', function (e) {
+    if (e.detail.rampartHandled) return;
+    e.detail.rampartHandled = true;
     const form = requestForm(e);
     setFormPending(form, false);
     if (!e.detail.successful) return;

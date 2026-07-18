@@ -687,12 +687,23 @@ async fn setup_post(Form(form): Form<PreviewSetupForm>) -> Response {
 }
 
 #[derive(Default, Deserialize)]
-struct PreviewEmptyQuery {
+struct PreviewListQuery {
     #[serde(default)]
     empty: bool,
+    #[serde(default)]
+    single: bool,
 }
 
-async fn aliases_page(Query(query): Query<PreviewEmptyQuery>) -> Response {
+fn preview_list<T>(query: &PreviewListQuery, mut rows: Vec<T>) -> Vec<T> {
+    if query.empty {
+        rows.clear();
+    } else if query.single {
+        rows.truncate(1);
+    }
+    rows
+}
+
+async fn aliases_page(Query(query): Query<PreviewListQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "aliases.html")]
     struct Page {
@@ -702,18 +713,18 @@ async fn aliases_page(Query(query): Query<PreviewEmptyQuery>) -> Response {
         user_email: String,
         is_admin: bool,
     }
-    let aliases = if query.empty { vec![] } else { mock_aliases() };
+    let aliases = preview_list(&query, mock_aliases());
     let total = aliases.len() as i64;
     render(&Page {
         aliases,
-        domains: if query.empty { vec![] } else { mock_domains() },
+        domains: preview_list(&query, mock_domains()),
         total,
         user_email: user_email(),
         is_admin: is_admin(),
     })
 }
 
-async fn mailboxes_page(Query(query): Query<PreviewEmptyQuery>) -> Response {
+async fn mailboxes_page(Query(query): Query<PreviewListQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "mailboxes.html")]
     struct Page {
@@ -722,17 +733,13 @@ async fn mailboxes_page(Query(query): Query<PreviewEmptyQuery>) -> Response {
         is_admin: bool,
     }
     render(&Page {
-        mailboxes: if query.empty {
-            vec![]
-        } else {
-            mock_mailboxes()
-        },
+        mailboxes: preview_list(&query, mock_mailboxes()),
         user_email: user_email(),
         is_admin: is_admin(),
     })
 }
 
-async fn domains_page(Query(query): Query<PreviewEmptyQuery>) -> Response {
+async fn domains_page(Query(query): Query<PreviewListQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "domains.html")]
     struct Page {
@@ -741,13 +748,13 @@ async fn domains_page(Query(query): Query<PreviewEmptyQuery>) -> Response {
         is_admin: bool,
     }
     render(&Page {
-        domains: if query.empty { vec![] } else { mock_domains() },
+        domains: preview_list(&query, mock_domains()),
         user_email: user_email(),
         is_admin: is_admin(),
     })
 }
 
-async fn settings_page(Query(query): Query<PreviewEmptyQuery>) -> Response {
+async fn settings_page(Query(query): Query<PreviewListQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "settings.html")]
     struct Page {
@@ -758,13 +765,13 @@ async fn settings_page(Query(query): Query<PreviewEmptyQuery>) -> Response {
     render(&Page {
         user_email: user_email(),
         is_admin: is_admin(),
-        passkeys: if query.empty { vec![] } else { mock_passkeys() },
+        passkeys: preview_list(&query, mock_passkeys()),
     })
 }
 
 async fn contacts_page(
     Path(_alias_id): Path<i64>,
-    Query(query): Query<PreviewEmptyQuery>,
+    Query(query): Query<PreviewListQuery>,
 ) -> Response {
     #[derive(Template)]
     #[template(path = "contacts.html")]
@@ -776,7 +783,7 @@ async fn contacts_page(
     }
     render(&Page {
         alias_address: "github@dev.local".into(),
-        contacts: if query.empty { vec![] } else { mock_contacts() },
+        contacts: preview_list(&query, mock_contacts()),
         user_email: user_email(),
         is_admin: is_admin(),
     })
@@ -784,7 +791,7 @@ async fn contacts_page(
 
 async fn activity_page(
     Path(_alias_id): Path<i64>,
-    Query(query): Query<PreviewEmptyQuery>,
+    Query(query): Query<PreviewListQuery>,
 ) -> Response {
     #[derive(Template)]
     #[template(path = "activity.html")]
@@ -798,11 +805,7 @@ async fn activity_page(
     }
     render(&Page {
         alias_address: "github@dev.local".into(),
-        activities: if query.empty {
-            vec![]
-        } else {
-            mock_activities()
-        },
+        activities: preview_list(&query, mock_activities()),
         page: 0,
         has_next: false,
         user_email: user_email(),
@@ -826,7 +829,7 @@ async fn admin_users_page() -> Response {
     })
 }
 
-async fn admin_domains_page(Query(query): Query<PreviewEmptyQuery>) -> Response {
+async fn admin_domains_page(Query(query): Query<PreviewListQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "admin_domains.html")]
     struct Page {
@@ -838,11 +841,7 @@ async fn admin_domains_page(Query(query): Query<PreviewEmptyQuery>) -> Response 
     render(&Page {
         user_email: user_email(),
         is_admin: true,
-        domains: if query.empty {
-            vec![]
-        } else {
-            mock_admin_domains()
-        },
+        domains: preview_list(&query, mock_admin_domains()),
     })
 }
 

@@ -41,10 +41,12 @@
         <a class="button-link" href="/domains">add domain</a>
     </div>
         {% else %}
-    <p class="hint">No aliases yet. Create one above.</p>
+    <div class="empty-state">
+        <p>No aliases yet. Create one above.</p>
+    </div>
         {% endif %}
     {% else %}
-    <table>
+    <table data-empty-message="No aliases yet. Create one above.">
         <thead>
             <tr><th>address</th><th>forward to</th><th>note</th><th>fwd</th><th>last</th><th></th></tr>
         </thead>
