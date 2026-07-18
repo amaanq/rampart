@@ -21,7 +21,9 @@ function bufToB64url(buf) {
 function normalize(challenge) {
     const pk = challenge.publicKey;
     pk.challenge = b64urlToBuf(pk.challenge);
-    pk.user.id = b64urlToBuf(pk.user.id);
+    if (pk.user?.id) {
+        pk.user.id = b64urlToBuf(pk.user.id);
+    }
     if (pk.excludeCredentials) {
         pk.excludeCredentials = pk.excludeCredentials.map(c => ({ ...c, id: b64urlToBuf(c.id) }));
     }
