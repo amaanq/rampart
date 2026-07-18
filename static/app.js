@@ -150,6 +150,17 @@ function updateBooleanToggle(trigger) {
         textTarget.textContent = text;
     }
 
+    const titleSelector = trigger.dataset.titleTarget;
+    if (titleSelector) {
+        const titleTarget = row && row.querySelector(titleSelector);
+        const title = value ? trigger.dataset.titleTrue : trigger.dataset.titleFalse;
+        if (!titleTarget || !title) {
+            location.reload();
+            return;
+        }
+        titleTarget.title = title;
+    }
+
     const statusSelector = trigger.dataset.statusTarget;
     if (!statusSelector) return;
     const status = row && row.querySelector(statusSelector);

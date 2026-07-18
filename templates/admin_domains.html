@@ -1,8 +1,14 @@
 {% extends "layout.html" %}
 {% block title %}admin — domains{% endblock %}
 {% block body %}
+<div class="admin-heading">
+    <h2>domains</h2>
+    <nav class="admin-nav" aria-label="Administration">
+        <a href="/admin/users">users</a>
+        <a href="/admin/domains" aria-current="page">domains</a>
+    </nav>
+</div>
 <section>
-    <h2>alias domains (all)</h2>
     {% if domains.is_empty() %}
     <div class="empty-state">
         <p>No alias domains yet. Add one before managing system-wide sharing.</p>
@@ -11,15 +17,26 @@
     {% else %}
     <table>
         <thead>
-            <tr><th>id</th><th>domain</th><th>owner</th><th class="domain-sharing">shared</th><th>aliases</th><th></th></tr>
+            <tr><th>id</th><th>domain</th><th>owner</th><th class="domain-sharing">access</th><th>aliases</th><th></th></tr>
         </thead>
         <tbody>
         {%- for d in domains %}
             <tr>
                 <td>{{ d.id }}</td>
                 <td>{{ d.domain }}</td>
-                <td>{{ d.owner_email.as_deref().unwrap_or("(none)") }}</td>
-                <td class="domain-sharing">{% if d.shared %}shared{% else %}private{% endif %}</td>
+                <td>
+                    {% if let Some(owner) = d.owner_email.as_deref() %}
+                    {{ owner }}
+                    {% else %}
+                    <span class="system-owner">system</span>
+                    {% endif %}
+                </td>
+                <td class="domain-sharing">
+                    <span class="domain-sharing-state"
+                          title="{% if d.shared %}Available to every user{% else if d.owner_email.is_some() %}Available only to its owner and administrators{% else %}Available only to administrators{% endif %}">
+                        {% if d.shared %}shared{% else %}private{% endif %}
+                    </span>
+                </td>
                 <td>{{ d.nb_alias }}</td>
                 <td>
                     <button class="secondary domain-sharing-toggle"
@@ -29,13 +46,16 @@
                             hx-disabled-elt="this"
                             data-reload="no"
                             data-boolean-toggle="shared"
-                            data-label-true="make private"
-                            data-label-false="make shared"
+                            data-label-true="unshare"
+                            data-label-false="share"
                             data-label-target=".domain-sharing-label"
-                            data-text-target=".domain-sharing"
+                            data-text-target=".domain-sharing-state"
                             data-text-true="shared"
-                            data-text-false="private">
-                        <span class="domain-sharing-label">{% if d.shared %}make private{% else %}make shared{% endif %}</span>
+                            data-text-false="private"
+                            data-title-target=".domain-sharing-state"
+                            data-title-true="Available to every user"
+                            data-title-false="{% if d.owner_email.is_some() %}Available only to its owner and administrators{% else %}Available only to administrators{% endif %}">
+                        <span class="domain-sharing-label">{% if d.shared %}unshare{% else %}share{% endif %}</span>
                     </button>
                 </td>
             </tr>

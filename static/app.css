@@ -246,6 +246,26 @@ main.auth .brand {
 }
 
 section { margin-bottom: 2em; }
+.admin-heading {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+.admin-heading h2 { margin: 0; }
+.admin-nav { display: flex; gap: 1rem; }
+.admin-nav a {
+    padding-bottom: .15rem;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
+    text-decoration: none;
+}
+.admin-nav a:hover { color: var(--fg); }
+.admin-nav a[aria-current="page"] {
+    border-color: var(--accent);
+    color: var(--fg);
+}
 .detail-header { margin-bottom: 1.25rem; }
 .detail-header h2 { margin: .45rem 0 .35rem; }
 .back-link {
@@ -383,9 +403,10 @@ td button {
     grid-area: label;
 }
 .domain-sharing-toggle::before {
-    content: "make private";
+    content: "unshare";
     visibility: hidden;
 }
+.system-owner { color: var(--muted); }
 .domain-in-use {
     color: var(--muted);
     font-size: .85rem;

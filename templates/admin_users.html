@@ -1,8 +1,14 @@
 {% extends "layout.html" %}
 {% block title %}admin — users{% endblock %}
 {% block body %}
-<section>
+<div class="admin-heading">
     <h2>users</h2>
+    <nav class="admin-nav" aria-label="Administration">
+        <a href="/admin/users" aria-current="page">users</a>
+        <a href="/admin/domains">domains</a>
+    </nav>
+</div>
+<section>
     <table>
         <thead>
             <tr><th>id</th><th>email</th><th>admin</th><th class="status-cell">enabled</th><th>aliases</th><th>domains</th><th>created</th><th></th></tr>
