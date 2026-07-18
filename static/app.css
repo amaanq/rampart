@@ -25,10 +25,10 @@ header {
 }
 header h1 { margin: 0; font-size: 1.2em; }
 header h1 a { color: var(--fg); text-decoration: none; }
-nav { display: flex; align-items: center; gap: 1em; }
-nav a { color: var(--muted); text-decoration: none; }
-nav a:hover { color: var(--accent); }
-nav a[aria-current="page"] {
+header nav { display: flex; align-items: center; gap: 1em; }
+header nav a { color: var(--muted); text-decoration: none; }
+header nav a:hover { color: var(--accent); }
+header nav a[aria-current="page"] {
     color: var(--fg);
     text-decoration: underline;
     text-decoration-color: var(--accent);
@@ -246,6 +246,20 @@ main.auth .brand {
 }
 
 section { margin-bottom: 2em; }
+.detail-header { margin-bottom: 1.25rem; }
+.detail-header h2 { margin: .45rem 0 .35rem; }
+.back-link {
+    display: inline-flex;
+    padding: .15rem 0;
+    color: var(--muted);
+    font-size: .875rem;
+    text-decoration: none;
+}
+.back-link:hover { color: var(--fg); }
+.back-link:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
 
 .card {
     background: #fff;
@@ -383,7 +397,8 @@ td button {
     gap: .35rem;
     white-space: nowrap;
 }
-.alias-action-link {
+.alias-action-link,
+.pager a {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -400,11 +415,13 @@ td button {
     text-decoration: none;
     transition: background-color .12s, border-color .12s, color .12s;
 }
-.alias-action-link:hover {
+.alias-action-link:hover,
+.pager a:hover {
     background: #eaeaea;
     border-color: #c7c7c7;
 }
-.alias-action-link:focus-visible {
+.alias-action-link:focus-visible,
+.pager a:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
@@ -461,7 +478,12 @@ code {
 
 /* Strict CSP (`style-src 'self'`) blocks inline `style=` attributes —
    classes below replace patterns that used to be inline. */
-.pager { margin-top: 1em; display: flex; gap: 1em; }
+.pager {
+    display: flex;
+    justify-content: flex-end;
+    gap: .35rem;
+    margin-top: 1rem;
+}
 .passkeys-table { margin-top: 1em; }
 .passkeys-empty { margin-top: 1em; }
 .rampart-error-banner {
@@ -502,6 +524,11 @@ code {
     border-color: var(--border);
     color: var(--fg);
 }
+button[hx-confirm] { width: 4rem; padding-inline: .3rem; }
+button.is-confirming {
+    background: #fdf2f2;
+    border-color: #e5aaaa;
+}
 
 @media (max-width: 700px) {
     header {
@@ -524,7 +551,7 @@ code {
         text-overflow: ellipsis;
         white-space: nowrap;
     }
-    nav {
+    header nav {
         grid-column: 1 / -1;
         grid-row: 2;
         gap: 1rem;
@@ -532,7 +559,7 @@ code {
         padding: 0 0 .75rem;
         scrollbar-width: none;
     }
-    nav::-webkit-scrollbar { display: none; }
+    header nav::-webkit-scrollbar { display: none; }
     main:not(.auth) { margin: 1.25rem auto; padding: 0 .75rem; }
     .rampart-error-banner {
         right: .75rem;

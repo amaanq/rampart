@@ -212,6 +212,61 @@ function showError(msg) {
     el.append(message, dismiss);
     document.body.appendChild(el);
 }
+
+let pendingConfirmation = null;
+
+function clearConfirmation() {
+    if (!pendingConfirmation) return;
+    const pending = pendingConfirmation;
+    pendingConfirmation = null;
+    if (!pending.trigger.isConnected) return;
+    pending.trigger.textContent = pending.label;
+    pending.trigger.classList.remove('is-confirming');
+    if (pending.title === null) {
+        pending.trigger.removeAttribute('title');
+    } else {
+        pending.trigger.title = pending.title;
+    }
+    if (pending.ariaLabel === null) {
+        pending.trigger.removeAttribute('aria-label');
+    } else {
+        pending.trigger.setAttribute('aria-label', pending.ariaLabel);
+    }
+}
+
+function armConfirmation(message, trigger) {
+    clearConfirmation();
+    const label = trigger.textContent.trim();
+    pendingConfirmation = {
+        trigger,
+        label,
+        title: trigger.getAttribute('title'),
+        ariaLabel: trigger.getAttribute('aria-label'),
+    };
+    trigger.textContent = `${label}?`;
+    trigger.classList.add('is-confirming');
+    trigger.title = message;
+    trigger.setAttribute('aria-label', `Confirm: ${message}`);
+    trigger.addEventListener('blur', function () {
+        if (pendingConfirmation && pendingConfirmation.trigger === trigger) clearConfirmation();
+    }, { once: true });
+}
+
+document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape') clearConfirmation();
+});
+
+document.body.addEventListener('htmx:confirm', function (e) {
+    if (!e.detail.question) return;
+    e.preventDefault();
+    if (pendingConfirmation && pendingConfirmation.trigger === e.detail.elt) {
+        clearConfirmation();
+        e.detail.issueRequest(true);
+        return;
+    }
+    armConfirmation(e.detail.question, e.detail.elt);
+});
+
 document.body.addEventListener('htmx:responseError', function (e) {
     const xhr = e.detail.xhr;
     if (xhr.status === 401) {

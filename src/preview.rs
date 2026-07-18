@@ -698,6 +698,10 @@ struct PreviewListQuery {
     no_mailbox: bool,
     #[serde(default)]
     deletable: bool,
+    #[serde(default)]
+    page: Option<i64>,
+    #[serde(default)]
+    has_next: bool,
 }
 
 fn preview_list<T>(query: &PreviewListQuery, mut rows: Vec<T>) -> Vec<T> {
@@ -826,8 +830,8 @@ async fn activity_page(
     render(&Page {
         alias_address: "github@dev.local".into(),
         activities: preview_list(&query, mock_activities()),
-        page: 0,
-        has_next: false,
+        page: query.page.unwrap_or(0).max(0),
+        has_next: query.has_next,
         user_email: user_email(),
         is_admin: is_admin(),
     })

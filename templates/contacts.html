@@ -1,8 +1,8 @@
 {% extends "layout.html" %}
 {% block title %}contacts — {{ alias_address }}{% endblock %}
 {% block body %}
-<section>
-    <p><a href="/">&larr; aliases</a></p>
+<section class="detail-header">
+    <a class="back-link" href="/">&larr; aliases</a>
     <h2>contacts for <code>{{ alias_address }}</code></h2>
     <p class="hint">
         Each contact is a sender you've received mail from on this alias.
