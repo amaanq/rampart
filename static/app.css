@@ -54,6 +54,10 @@ header nav a[aria-current="page"] {
 }
 .user-menu summary::-webkit-details-marker { display: none; }
 .user-menu summary:hover { border-color: var(--border); color: var(--fg); }
+.user-menu summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
 .user-menu[open] summary { border-color: var(--border); color: var(--fg); }
 .user-menu-caret { font-size: .7em; margin-left: .35em; opacity: .7; }
 .user-menu-panel {

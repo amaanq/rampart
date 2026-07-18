@@ -66,7 +66,13 @@ function removeRequestTarget(trigger) {
         ? document.querySelector(trigger.dataset.countTarget)
         : null;
     const table = target.closest('table');
+    const shouldMoveFocus = document.activeElement === trigger;
+    let nextAction = null;
     if (table && target.matches('tr')) {
+        const rows = Array.from(table.querySelectorAll('tbody tr:not(.is-removed)'));
+        const index = rows.indexOf(target);
+        const nextRow = rows[index + 1] || rows[index - 1];
+        nextAction = nextRow && nextRow.querySelector('[hx-delete]');
         target.classList.add('is-removed');
         target.setAttribute('aria-hidden', 'true');
         target.inert = true;
@@ -77,7 +83,10 @@ function removeRequestTarget(trigger) {
         const value = Number.parseInt(count.textContent, 10);
         if (Number.isFinite(value)) count.textContent = String(Math.max(0, value - 1));
     }
-    if (!table || table.querySelector('tbody tr:not(.is-removed)')) return;
+    if (!table || table.querySelector('tbody tr:not(.is-removed)')) {
+        if (shouldMoveFocus && nextAction) nextAction.focus({preventScroll: true});
+        return;
+    }
     const message = table.dataset.emptyMessage;
     if (!message) return;
     const emptyState = document.createElement('div');
@@ -85,13 +94,16 @@ function removeRequestTarget(trigger) {
     emptyState.className = emptyClass || 'empty-state';
     if (emptyClass) {
         emptyState.textContent = message;
-        table.replaceWith(emptyState);
-        return;
+    } else {
+        const copy = document.createElement('p');
+        copy.textContent = message;
+        emptyState.appendChild(copy);
     }
-    const copy = document.createElement('p');
-    copy.textContent = message;
-    emptyState.appendChild(copy);
     table.replaceWith(emptyState);
+    if (shouldMoveFocus) {
+        emptyState.tabIndex = -1;
+        emptyState.focus({preventScroll: true});
+    }
 }
 
 function toggleRequestTarget(trigger) {
@@ -297,8 +309,22 @@ function armConfirmation(message, trigger) {
     }, { once: true });
 }
 
+function closeUserMenu(restoreFocus) {
+    const menu = document.querySelector('.user-menu[open]');
+    if (!menu) return;
+    menu.removeAttribute('open');
+    if (restoreFocus) menu.querySelector('summary').focus();
+}
+
+document.addEventListener('click', function (event) {
+    const menu = document.querySelector('.user-menu[open]');
+    if (menu && !menu.contains(event.target)) closeUserMenu(false);
+});
+
 document.addEventListener('keydown', function (event) {
-    if (event.key === 'Escape') clearConfirmation();
+    if (event.key !== 'Escape') return;
+    clearConfirmation();
+    closeUserMenu(true);
 });
 
 document.body.addEventListener('htmx:confirm', function (e) {
