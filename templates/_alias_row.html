@@ -22,6 +22,7 @@
             <button class="danger"
                     aria-label="Delete alias {{ a.address }}"
                     hx-delete="/api/v1/aliases/{{ a.id }}"
+                    hx-disabled-elt="this"
                     data-reload="no"
                     data-remove-closest="tr"
                     data-count-target="#alias-count"

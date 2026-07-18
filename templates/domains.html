@@ -41,6 +41,7 @@
                     <button class="danger"
                             aria-label="Delete domain {{ d.domain }}"
                             hx-delete="/api/v1/domain/{{ d.id }}"
+                            hx-disabled-elt="this"
                             data-reload="no"
                             data-remove-closest="tr"
                             hx-confirm="delete {{ d.domain }}?">delete</button>

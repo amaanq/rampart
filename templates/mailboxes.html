@@ -62,6 +62,7 @@
                     <button class="danger mailbox-action-delete"
                             aria-label="Delete mailbox {{ m.email }}"
                             hx-delete="/api/v1/mailbox/{{ m.id }}"
+                            hx-disabled-elt="this"
                             data-reload="no"
                             data-remove-closest="tr"
                             hx-confirm="delete {{ m.email }}? aliases pointing at this mailbox must be reassigned or deleted first.">delete</button>

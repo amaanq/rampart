@@ -52,6 +52,7 @@
                 <td><button class="danger"
                             aria-label="Delete passkey {{ k.name }}"
                             hx-delete="/api/v1/user/webauthn/credentials/{{ k.id }}"
+                            hx-disabled-elt="this"
                             data-reload="no"
                             data-remove-closest="tr"
                             hx-confirm="delete passkey {{ k.name }}?">delete</button></td>

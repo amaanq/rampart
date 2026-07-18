@@ -11,7 +11,7 @@
         styles inline. Disable that. Also disable script-tag execution
         and eval to keep our `script-src 'self'` + no-unsafe-* posture.
     -->
-    <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false}'>
+    <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"timeout":30000}'>
     <script src="/static/htmx.min.js" defer></script>
     <script src="/static/htmx-ext-json-enc.min.js" defer></script>
     <script src="/static/app.js?v=20260716" defer></script>

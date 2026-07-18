@@ -66,12 +66,18 @@ function removeRequestTarget(trigger) {
         ? document.querySelector(trigger.dataset.countTarget)
         : null;
     const table = target.closest('table');
-    target.remove();
+    if (table && target.matches('tr')) {
+        target.classList.add('is-removed');
+        target.setAttribute('aria-hidden', 'true');
+        target.inert = true;
+    } else {
+        target.remove();
+    }
     if (count) {
         const value = Number.parseInt(count.textContent, 10);
         if (Number.isFinite(value)) count.textContent = String(Math.max(0, value - 1));
     }
-    if (!table || table.querySelector('tbody tr')) return;
+    if (!table || table.querySelector('tbody tr:not(.is-removed)')) return;
     const message = table.dataset.emptyMessage;
     if (!message) return;
     const emptyState = document.createElement('div');
@@ -181,8 +187,18 @@ function completeRequestTrigger(trigger) {
     if (trigger.hasAttribute('data-disable-on-success')) trigger.disabled = true;
 }
 
+function setRequestPending(trigger, pending) {
+    if (!trigger || !trigger.matches || !trigger.matches('button')) return;
+    if (pending) {
+        trigger.setAttribute('aria-busy', 'true');
+    } else {
+        trigger.removeAttribute('aria-busy');
+    }
+}
+
 document.body.addEventListener('htmx:beforeRequest', function (e) {
     clearError();
+    setRequestPending(e.detail.elt, true);
     const form = requestForm(e);
     if (!form) return;
     showFormStatus(form, '', false);
@@ -190,6 +206,7 @@ document.body.addEventListener('htmx:beforeRequest', function (e) {
 });
 
 document.body.addEventListener('htmx:afterRequest', function (e) {
+    setRequestPending(e.detail.elt, false);
     if (e.detail.rampartHandled) return;
     e.detail.rampartHandled = true;
     const form = requestForm(e);
@@ -296,6 +313,7 @@ document.body.addEventListener('htmx:confirm', function (e) {
 });
 
 document.body.addEventListener('htmx:responseError', function (e) {
+    setRequestPending(e.detail.elt, false);
     const xhr = e.detail.xhr;
     if (xhr.status === 401) {
         const next = location.pathname + location.search;
@@ -310,7 +328,15 @@ document.body.addEventListener('htmx:responseError', function (e) {
     if (!showFormStatus(form, msg, true)) showError(msg);
 });
 document.body.addEventListener('htmx:sendError', function (e) {
+    setRequestPending(e.detail.elt, false);
     const msg = 'Network error — could not reach server.';
+    const form = requestForm(e);
+    setFormPending(form, false);
+    if (!showFormStatus(form, msg, true)) showError(msg);
+});
+document.body.addEventListener('htmx:timeout', function (e) {
+    setRequestPending(e.detail.elt, false);
+    const msg = 'Request timed out — try again.';
     const form = requestForm(e);
     setFormPending(form, false);
     if (!showFormStatus(form, msg, true)) showError(msg);
