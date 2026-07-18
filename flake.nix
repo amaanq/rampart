@@ -10,6 +10,21 @@
       pkgsFor = system: nixpkgs.legacyPackages.${system} or (import nixpkgs { inherit system; });
 
       hasFenix = system: fenix.packages ? ${system};
+
+      # wild + clang are only used on Linux tier-1 arches
+      hasWild = plat: plat.isLinux && (plat.isx86_64 || plat.isAarch64);
+      nativeDepsFor =
+        system:
+        let
+          pkgs = pkgsFor system;
+        in
+        nixpkgs.lib.optionals (hasWild pkgs.stdenv.hostPlatform) [
+          pkgs.wild
+          pkgs.clang
+        ];
+      nightlyRustfmtFor =
+        system:
+        if hasFenix system then fenix.packages.${system}.latest.rustfmt else (pkgsFor system).rustfmt;
       rustPlatformFor =
         system:
         let
@@ -35,10 +50,10 @@
           ]);
     in
     {
-      # Named `rampart`, not `default`: ~/dotfiles auto-imports every input's
-      # `nixosModules.default` into every host. Consumers must explicitly
-      # `imports = [ inputs.rampart.nixosModules.rampart ]`.
-      nixosModules.rampart = ./nix/module.nix;
+      nixosModules = {
+        rampart = ./nix/module.nix;
+        default = ./nix/module.nix;
+      };
 
       packages = forEachSystem (
         system:
@@ -46,9 +61,6 @@
           pkgs = pkgsFor system;
         in
         {
-          # `nix build .#default` from a dev shell. NixOS hosts with a
-          # cross-configured pkgs use `services.rampart.package` (consumes the
-          # host's pkgs) instead, so this stays a native build.
           default = pkgs.callPackage ./nix/package.nix {
             rustPlatform = rustPlatformFor system;
           };
@@ -62,19 +74,25 @@
         in
         {
           default = pkgs.mkShell {
-            nativeBuildInputs = toolchainFor system ++ [
+            nativeBuildInputs = [
+              (nightlyRustfmtFor system)
+            ]
+            ++ toolchainFor system
+            ++ [
               pkgs.pkg-config
-            ];
+            ]
+            ++ nativeDepsFor system;
             buildInputs = [
               pkgs.openssl
               pkgs.postgresql_16
               pkgs.cargo-watch
+              pkgs.cargo-deny
               pkgs.swaks
               pkgs.cornucopia
+              pkgs.taplo
             ];
-            # Default to a local-socket dev DB so DB-backed tests don't
-            # silently skip. Operator creates it once: `createdb rampart_test`.
-            shellHook = ''
+            # Use a local socket so DB-backed tests don't silently skip.
+            shellHook = /* sh */ ''
               : "''${RAMPART_TEST_DB_URL:=host=/tmp dbname=rampart_test}"
               export RAMPART_TEST_DB_URL
               export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [ pkgs.openssl ]}:''${LD_LIBRARY_PATH:-}"
@@ -83,7 +101,6 @@
         }
       );
 
-      # Fails if db/rampart-codegen/ drifts from queries/ × migrations/.
       checks = forEachSystem (
         system:
         let
@@ -98,8 +115,7 @@
                   pkgs.diffutils
                   pkgs.cornucopia
                 ]
-                # Cornucopia reformats output via rustfmt-on-PATH; without
-                # it the check emits unformatted output and false-positives.
+                # Cornucopia needs rustfmt on PATH to produce stable output.
                 ++ toolchainFor system;
               }
               ''

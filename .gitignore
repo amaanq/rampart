@@ -4,13 +4,22 @@
 # Top-level
 !.envrc
 !.gitignore
+!.rustfmt.toml
+!.taplo.toml
 !Cargo.lock
 !Cargo.toml
 !README.md
 !cornucopia.toml
+!deny.toml
 !flake.lock
 !flake.nix
 !rust-toolchain.toml
+
+# Cargo config + CI
+!.cargo/
+!.cargo/**
+!.github/
+!.github/**
 
 # Tack-managed Nix inputs
 !.tack/
