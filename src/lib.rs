@@ -30,9 +30,9 @@ use deadpool_postgres::Pool;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub pool: Pool,
-    pub config: Arc<config::Config>,
-    pub verify_cache: Arc<auth::VerifyCache>,
-    pub mailer: Arc<dyn mailer::Mailer>,
-    pub webauthn: Arc<webauthn_rs::Webauthn>,
+   pub pool:         Pool,
+   pub config:       Arc<config::Config>,
+   pub verify_cache: Arc<auth::VerifyCache>,
+   pub mailer:       Arc<dyn mailer::Mailer>,
+   pub webauthn:     Arc<webauthn_rs::Webauthn>,
 }

@@ -12,18 +12,30 @@ pub mod pipeline;
 pub mod resubmit;
 pub mod verp;
 
-use anyhow::{Context, Result};
 use std::sync::Arc;
 
-use crate::mailer::{Mailer, SmtpMailer};
-use crate::worker::resubmit::{Submit, SubmitClient};
+use anyhow::{
+   Context,
+   Result,
+};
+
+use crate::{
+   mailer::{
+      Mailer,
+      SmtpMailer,
+   },
+   worker::resubmit::{
+      Submit,
+      SubmitClient,
+   },
+};
 
 #[derive(Clone)]
 pub struct WorkerState {
-    pub pool: deadpool_postgres::Pool,
-    pub config: Arc<crate::config::Config>,
-    pub mailer: Arc<dyn Mailer>,
-    pub submit: Arc<dyn Submit>,
+   pub pool:   deadpool_postgres::Pool,
+   pub config: Arc<crate::config::Config>,
+   pub mailer: Arc<dyn Mailer>,
+   pub submit: Arc<dyn Submit>,
 }
 
 /// Dispatch an assembled LMTP delivery into the processing pipeline.
@@ -31,7 +43,7 @@ pub struct WorkerState {
 /// mock handler that returns preset verdicts without touching Postgres.
 #[async_trait::async_trait]
 pub trait DeliveryHandler: Send + Sync {
-    async fn handle(&self, state: &WorkerState, d: pipeline::Delivery) -> pipeline::Verdict;
+   async fn handle(&self, state: &WorkerState, d: pipeline::Delivery) -> pipeline::Verdict;
 }
 
 /// Production handler: runs the real DB-backed pipeline.
@@ -39,24 +51,24 @@ pub struct PipelineHandler;
 
 #[async_trait::async_trait]
 impl DeliveryHandler for PipelineHandler {
-    async fn handle(&self, state: &WorkerState, d: pipeline::Delivery) -> pipeline::Verdict {
-        pipeline::process(state, d).await
-    }
+   async fn handle(&self, state: &WorkerState, d: pipeline::Delivery) -> pipeline::Verdict {
+      pipeline::process(state, d).await
+   }
 }
 
 pub async fn run(cfg: crate::config::Config) -> Result<()> {
-    let pool = crate::db::build_pool(&cfg.database_url)?;
-    let _probe = pool.get().await.context("db probe")?;
-    let smtp = SmtpMailer::from_config(&cfg).context("configure SmtpMailer for worker")?;
-    let mailer: Arc<dyn Mailer> = Arc::new(smtp);
-    let submit_client =
-        SubmitClient::from_config(&cfg).context("configure SubmitClient for worker")?;
-    let submit: Arc<dyn Submit> = Arc::new(submit_client);
-    let state = WorkerState {
-        pool,
-        config: Arc::new(cfg),
-        mailer,
-        submit,
-    };
-    lmtp::serve(state).await
+   let pool = crate::db::build_pool(&cfg.database_url)?;
+   let _probe = pool.get().await.context("db probe")?;
+   let smtp = SmtpMailer::from_config(&cfg).context("configure SmtpMailer for worker")?;
+   let mailer: Arc<dyn Mailer> = Arc::new(smtp);
+   let submit_client =
+      SubmitClient::from_config(&cfg).context("configure SubmitClient for worker")?;
+   let submit: Arc<dyn Submit> = Arc::new(submit_client);
+   let state = WorkerState {
+      pool,
+      config: Arc::new(cfg),
+      mailer,
+      submit,
+   };
+   lmtp::serve(state).await
 }

@@ -4,12 +4,21 @@
 //! can't be added without the check.
 
 use axum::{
-    Router, middleware,
-    routing::{delete, get, patch, post, put},
+   Router,
+   middleware,
+   routing::{
+      delete,
+      get,
+      patch,
+      post,
+      put,
+   },
 };
 
-use crate::AppState;
-use crate::auth;
+use crate::{
+   AppState,
+   auth,
+};
 
 mod admin;
 mod aliases;
@@ -21,25 +30,25 @@ mod user;
 mod webauthn;
 
 pub fn router() -> Router<AppState> {
-    let admin_routes = Router::new()
-        .route("/api/v1/admin/users", get(admin::admin_users_list))
-        .route("/api/v1/admin/users", post(admin::admin_user_create))
-        .route("/api/v1/admin/users/{id}", patch(admin::admin_user_patch))
-        .route(
-            "/api/v1/admin/users/{id}/enable",
-            put(admin::admin_user_enable),
-        )
-        .route(
-            "/api/v1/admin/users/{id}/disable",
-            put(admin::admin_user_disable),
-        )
-        .route(
-            "/api/v1/admin/domains/{id}/shared",
-            put(admin::admin_domain_set_shared),
-        )
-        .layer(middleware::from_fn(auth::admin_layer));
+   let admin_routes = Router::new()
+      .route("/api/v1/admin/users", get(admin::admin_users_list))
+      .route("/api/v1/admin/users", post(admin::admin_user_create))
+      .route("/api/v1/admin/users/{id}", patch(admin::admin_user_patch))
+      .route(
+         "/api/v1/admin/users/{id}/enable",
+         put(admin::admin_user_enable),
+      )
+      .route(
+         "/api/v1/admin/users/{id}/disable",
+         put(admin::admin_user_disable),
+      )
+      .route(
+         "/api/v1/admin/domains/{id}/shared",
+         put(admin::admin_domain_set_shared),
+      )
+      .layer(middleware::from_fn(auth::admin_layer));
 
-    Router::new()
+   Router::new()
         .route("/api/v1/user/info", get(user::user_info))
         // aliases (user-scoped)
         .route("/api/v1/aliases", get(aliases::aliases_list))

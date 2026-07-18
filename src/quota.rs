@@ -25,6 +25,6 @@ pub const LOCK_CLASS_DOMAIN_CAP: u8 = 2;
 /// friend-pool scale. If rampart ever runs as a public service, switch to
 /// a hash-derived lock key.
 pub fn lock_id(class: u8, user_id: i64) -> i64 {
-    let user_low = (user_id as u64) & 0x00FF_FFFF_FFFF_FFFF;
-    (((class as u64) << 56) | user_low) as i64
+   let user_low = (user_id as u64) & 0x00FF_FFFF_FFFF_FFFF;
+   (((class as u64) << 56) | user_low) as i64
 }
