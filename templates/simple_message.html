@@ -12,8 +12,8 @@
     <section class="auth-card">
         <h1>{{ heading }}</h1>
         <p class="auth-copy">{{ message }}</p>
-        {%- if show_back %}
-        <p class="auth-hint"><a href="/">Back to rampart</a></p>
+        {%- if show_link %}
+        <p class="auth-hint"><a href="{{ link_href }}">{{ link_label }}</a></p>
         {%- endif %}
     </section>
 </main>

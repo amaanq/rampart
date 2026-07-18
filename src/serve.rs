@@ -768,8 +768,10 @@ async fn mailbox_verify_post(State(state): State<AppState>, Path(token): Path<St
         Ok(_id) => render_simple_message(
             StatusCode::OK,
             "Mailbox verified",
-            "You can close this page and return to rampart.",
-            false,
+            "This mailbox is ready to use with rampart.",
+            true,
+            "/mailboxes",
+            "Go to mailboxes",
         ),
         Err(e) => render_error(&format!("verification failed: {e}")),
     }
@@ -787,20 +789,26 @@ fn render_or_err(r: Result<String, askama::Error>) -> Response {
 struct SimpleMessage<'a> {
     heading: &'a str,
     message: &'a str,
-    show_back: bool,
+    show_link: bool,
+    link_href: &'a str,
+    link_label: &'a str,
 }
 
 fn render_simple_message(
     status: StatusCode,
     heading: &str,
     message: &str,
-    show_back: bool,
+    show_link: bool,
+    link_href: &str,
+    link_label: &str,
 ) -> Response {
     use askama::Template;
     match (SimpleMessage {
         heading,
         message,
-        show_back,
+        show_link,
+        link_href,
+        link_label,
     })
     .render()
     {
@@ -810,7 +818,14 @@ fn render_simple_message(
 }
 
 fn render_error(msg: &str) -> Response {
-    render_simple_message(StatusCode::BAD_REQUEST, "Something went wrong", msg, true)
+    render_simple_message(
+        StatusCode::BAD_REQUEST,
+        "Something went wrong",
+        msg,
+        true,
+        "/",
+        "Back to rampart",
+    )
 }
 
 #[derive(Deserialize)]

@@ -460,12 +460,16 @@ async fn mailbox_verify_post() -> Response {
     struct SimpleMessage<'a> {
         heading: &'a str,
         message: &'a str,
-        show_back: bool,
+        show_link: bool,
+        link_href: &'a str,
+        link_label: &'a str,
     }
     render(&SimpleMessage {
         heading: "Mailbox verified",
-        message: "You can close this page and return to rampart.",
-        show_back: false,
+        message: "This mailbox is ready to use with rampart.",
+        show_link: true,
+        link_href: "/mailboxes",
+        link_label: "Go to mailboxes",
     })
 }
 
