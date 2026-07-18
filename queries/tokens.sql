@@ -64,3 +64,9 @@ VALUES (:token_hash, :mailbox_id, :expires_at);
 UPDATE mailbox_verify_token SET used_at = now()
 WHERE token_hash = :token_hash AND used_at IS NULL AND expires_at > now()
 RETURNING mailbox_id;
+
+--! mailbox_verify_failure
+SELECT used_at IS NOT NULL AS used,
+       expires_at <= now() AS expired
+FROM mailbox_verify_token
+WHERE token_hash = :token_hash;

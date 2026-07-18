@@ -563,13 +563,26 @@ async fn mailbox_verify_page(Path(token): Path<String>) -> Response {
     confirm_page(token, "verify").await
 }
 
-async fn mailbox_verify_post() -> Response {
-    render_simple_message_page(
-        "Mailbox verified",
-        "This mailbox is ready to use with rampart.",
-        "/mailboxes",
-        "Go to mailboxes",
-    )
+async fn mailbox_verify_post(Path(token): Path<String>) -> Response {
+    let (heading, message) = match token.as_str() {
+        "invalid" => (
+            "Verification link isn’t valid",
+            "Check that you opened the complete link from your email.",
+        ),
+        "expired" => (
+            "Verification link expired",
+            "This mailbox verification link has expired. Send a new one from mailboxes.",
+        ),
+        "used" => (
+            "Verification link already used",
+            "This link has already been used. Check the mailbox status in rampart.",
+        ),
+        _ => (
+            "Mailbox verified",
+            "This mailbox is ready to use with rampart.",
+        ),
+    };
+    render_simple_message_page(heading, message, "/mailboxes", "Go to mailboxes")
 }
 
 async fn setup_page() -> Response {

@@ -9,9 +9,9 @@ use support::TestDb;
 use hmac_sha256::Hash;
 use rampart::auth::VerifyCache;
 use rampart::flows::{
-    EmailChangeError, InviteSignupError, PasswordResetError, apply_email_change,
-    apply_mailbox_verify, apply_password_reset, claim_invite_and_create_user, start_email_change,
-    start_mailbox_verify, start_password_reset,
+    EmailChangeError, InviteSignupError, MailboxVerifyError, PasswordResetError,
+    apply_email_change, apply_mailbox_verify, apply_password_reset, claim_invite_and_create_user,
+    start_email_change, start_mailbox_verify, start_password_reset,
 };
 use rampart::mailer::MemoryMailer;
 use time::{Duration, OffsetDateTime};
@@ -218,6 +218,49 @@ async fn mailbox_verify_round_trip() {
         .unwrap()
         .get("verified");
     assert!(v);
+    db.teardown().await;
+}
+
+#[tokio::test]
+async fn mailbox_verify_reports_distinct_failures() {
+    let db = test_db!();
+    let (mid, token) = {
+        let c = db.pool.get().await.unwrap();
+        let uid = seed_user(&c, "alice@test").await;
+        let mid = seed_mailbox(&c, uid, "alice@gmail.com").await;
+        drop(c);
+        let mailer = MemoryMailer::new();
+        start_mailbox_verify(&db.pool, &mailer, "http://localhost", mid)
+            .await
+            .unwrap();
+        (mid, extract_token(&mailer.drain()[0].body))
+    };
+    apply_mailbox_verify(&db.pool, &token).await.unwrap();
+    let used = apply_mailbox_verify(&db.pool, &token).await.unwrap_err();
+    assert!(matches!(used, MailboxVerifyError::AlreadyUsed));
+
+    let expired_token = "expired-mailbox-verification";
+    let expired_hash = Hash::hash(expired_token.as_bytes()).to_vec();
+    let past = OffsetDateTime::now_utc() - Duration::hours(1);
+    {
+        let c = db.pool.get().await.unwrap();
+        c.execute(
+            "INSERT INTO mailbox_verify_token (token_hash, mailbox_id, expires_at) VALUES ($1, $2, $3)",
+            &[&expired_hash, &mid, &past],
+        )
+        .await
+        .unwrap();
+    }
+    let expired = apply_mailbox_verify(&db.pool, expired_token)
+        .await
+        .unwrap_err();
+    assert!(matches!(expired, MailboxVerifyError::Expired));
+
+    let invalid = apply_mailbox_verify(&db.pool, "missing-mailbox-verification")
+        .await
+        .unwrap_err();
+    assert!(matches!(invalid, MailboxVerifyError::Invalid));
+
     db.teardown().await;
 }
 

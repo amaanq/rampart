@@ -898,7 +898,33 @@ async fn mailbox_verify_post(State(state): State<AppState>, Path(token): Path<St
             "/mailboxes",
             "Go to mailboxes",
         ),
-        Err(e) => render_error(&format!("verification failed: {e}")),
+        Err(crate::flows::MailboxVerifyError::Invalid) => render_simple_message(
+            StatusCode::BAD_REQUEST,
+            "Verification link isn’t valid",
+            "Check that you opened the complete link from your email.",
+            true,
+            "/mailboxes",
+            "Go to mailboxes",
+        ),
+        Err(crate::flows::MailboxVerifyError::Expired) => render_simple_message(
+            StatusCode::GONE,
+            "Verification link expired",
+            "This mailbox verification link has expired. Send a new one from mailboxes.",
+            true,
+            "/mailboxes",
+            "Go to mailboxes",
+        ),
+        Err(crate::flows::MailboxVerifyError::AlreadyUsed) => render_simple_message(
+            StatusCode::GONE,
+            "Verification link already used",
+            "This link has already been used. Check the mailbox status in rampart.",
+            true,
+            "/mailboxes",
+            "Go to mailboxes",
+        ),
+        Err(crate::flows::MailboxVerifyError::Internal(error)) => {
+            ApiError::Internal(error).into_response()
+        }
     }
 }
 

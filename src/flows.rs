@@ -67,6 +67,18 @@ pub enum EmailChangeError {
     Internal(#[from] anyhow::Error),
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum MailboxVerifyError {
+    #[error("mailbox verification token is invalid")]
+    Invalid,
+    #[error("mailbox verification token has expired")]
+    Expired,
+    #[error("mailbox verification token has already been used")]
+    AlreadyUsed,
+    #[error(transparent)]
+    Internal(#[from] anyhow::Error),
+}
+
 fn generate_token() -> (String, Vec<u8>) {
     let mut bytes = [0u8; 24];
     rand::rngs::OsRng
@@ -384,19 +396,42 @@ pub async fn start_mailbox_verify(
     Ok(())
 }
 
-pub async fn apply_mailbox_verify(pool: &Pool, token: &str) -> Result<i64> {
-    let mut c = pool.get().await?;
+pub async fn apply_mailbox_verify(
+    pool: &Pool,
+    token: &str,
+) -> std::result::Result<i64, MailboxVerifyError> {
+    let mut c = pool.get().await.context("opening mailbox verification")?;
     let hash = hash_token(token);
-    let txn = c.transaction().await?;
+    let txn = c
+        .transaction()
+        .await
+        .context("starting mailbox verification transaction")?;
     let Some(mailbox_id) = tokens::mailbox_verify_claim()
         .bind(&txn, &hash)
         .opt()
-        .await?
+        .await
+        .context("claiming mailbox verification token")?
     else {
-        anyhow::bail!("invalid, expired, or already-used token");
+        let failure = tokens::mailbox_verify_failure()
+            .bind(&txn, &hash)
+            .opt()
+            .await
+            .context("inspecting mailbox verification failure")?;
+        txn.rollback().await.ok();
+        return Err(match failure {
+            None => MailboxVerifyError::Invalid,
+            Some(failure) if failure.used => MailboxVerifyError::AlreadyUsed,
+            Some(failure) if failure.expired => MailboxVerifyError::Expired,
+            Some(_) => MailboxVerifyError::Invalid,
+        });
     };
-    mailboxes::set_verified().bind(&txn, &mailbox_id).await?;
-    txn.commit().await?;
+    mailboxes::set_verified()
+        .bind(&txn, &mailbox_id)
+        .await
+        .context("marking mailbox verified")?;
+    txn.commit()
+        .await
+        .context("committing mailbox verification")?;
     tracing::info!(mailbox_id, "mailbox verified");
     Ok(mailbox_id)
 }
