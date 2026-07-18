@@ -590,6 +590,24 @@ button.is-confirming {
     }
     header nav::-webkit-scrollbar { display: none; }
     main:not(.auth) { margin: 1.25rem auto; padding: 0 .75rem; }
+    main.auth { margin: 2.5rem auto 2rem; }
+    .auth-card { padding: 1.5rem 1.25rem 1.25rem; }
+    .card { padding: 1rem; }
+    .card form {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        align-items: stretch;
+    }
+    .card form > label,
+    .card form input,
+    .card form select { width: 100%; }
+    .card form > button,
+    .card form > .form-status { justify-self: start; }
+    .card form > .form-status { align-self: auto; }
+    .form-action-row {
+        align-self: stretch;
+        align-items: center;
+    }
     .rampart-error-banner {
         right: .75rem;
         bottom: .75rem;
@@ -600,5 +618,6 @@ button.is-confirming {
         max-width: 100%;
         overflow-x: auto;
     }
+    th, td { padding: .55rem .7rem; }
     input, select { min-width: 0; max-width: 100%; }
 }
