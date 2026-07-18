@@ -1,6 +1,7 @@
 {% extends "layout.html" %}
 {% block title %}aliases{% endblock %}
 {% block body %}
+{% if !domains.is_empty() %}
 <section class="card">
     <h2>new random alias</h2>
     <form hx-post="/api/v1/alias/random" hx-ext="json-enc" hx-sync="this:drop">
@@ -29,9 +30,20 @@
         <p class="form-status" data-form-status role="status" aria-live="polite"></p>
     </form>
 </section>
+{% endif %}
 
 <section>
     <h2>your aliases (<span id="alias-count">{{ total }}</span>)</h2>
+    {% if aliases.is_empty() %}
+        {% if domains.is_empty() %}
+    <div class="empty-state">
+        <p>Aliases need a domain before you can create one.</p>
+        <a class="button-link" href="/domains">add domain</a>
+    </div>
+        {% else %}
+    <p class="hint">No aliases yet. Create one above.</p>
+        {% endif %}
+    {% else %}
     <table>
         <thead>
             <tr><th>address</th><th>forward to</th><th>note</th><th>fwd</th><th>last</th><th></th></tr>
@@ -42,5 +54,6 @@
         {%- endfor %}
         </tbody>
     </table>
+    {% endif %}
 </section>
 {% endblock %}

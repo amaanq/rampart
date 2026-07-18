@@ -682,7 +682,13 @@ async fn setup_post(Form(form): Form<PreviewSetupForm>) -> Response {
     )
 }
 
-async fn aliases_page() -> Response {
+#[derive(Default, Deserialize)]
+struct PreviewAliasesQuery {
+    #[serde(default)]
+    empty: bool,
+}
+
+async fn aliases_page(Query(query): Query<PreviewAliasesQuery>) -> Response {
     #[derive(Template)]
     #[template(path = "aliases.html")]
     struct Page {
@@ -692,11 +698,11 @@ async fn aliases_page() -> Response {
         user_email: String,
         is_admin: bool,
     }
-    let aliases = mock_aliases();
+    let aliases = if query.empty { vec![] } else { mock_aliases() };
     let total = aliases.len() as i64;
     render(&Page {
         aliases,
-        domains: mock_domains(),
+        domains: if query.empty { vec![] } else { mock_domains() },
         total,
         user_email: user_email(),
         is_admin: is_admin(),

@@ -9,6 +9,7 @@
 }
 body {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    min-height: 100vh;
     margin: 0;
     color: var(--fg);
     background: var(--bg);
@@ -255,6 +256,18 @@ section { margin-bottom: 2em; }
 }
 .card h2 { margin-top: 0; font-size: 1em; color: var(--muted); }
 .hint { color: var(--muted); font-size: .85em; margin: .25em 0; }
+.empty-state {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: .75rem 1rem;
+    padding: .85rem 1rem;
+    background: #fff;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+.empty-state p { margin: 0; color: var(--muted); }
 .error { color: var(--danger); font-weight: 500; }
 .form-status {
     display: flex;
@@ -284,7 +297,8 @@ form { display: flex; flex-wrap: wrap; gap: .75em; align-items: end; }
 main.auth form { flex-direction: column; align-items: stretch; text-align: left; }
 label { display: flex; flex-direction: column; font-size: .85em; color: var(--muted); }
 input, select { padding: .4em .6em; font-size: 1em; border: 1px solid var(--border); border-radius: 4px; min-width: 12em; }
-button {
+button,
+.button-link {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -300,9 +314,12 @@ button {
     border-radius: 5px;
     cursor: pointer;
     transition: background-color .12s, border-color .12s, color .12s;
+    text-decoration: none;
 }
-button:hover { background: #0046b3; }
-button:focus-visible {
+button:hover,
+.button-link:hover { background: #0046b3; }
+button:focus-visible,
+.button-link:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
