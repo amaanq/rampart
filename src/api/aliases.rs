@@ -216,6 +216,7 @@ pub(super) async fn alias_activities(
             json!({
                 "id": l.id,
                 "action": l.action,
+                "status": l.status,
                 "from": l.from_address,
                 "created_at": l.created_at.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
                 "reason": l.reason,

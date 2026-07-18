@@ -429,6 +429,10 @@ td button {
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
 }
+.activity-status.is-pending { color: var(--muted); }
+.activity-status.is-failed,
+.activity-status.is-bounced { color: var(--danger); }
+.empty-value { color: var(--muted); }
 
 table {
     width: 100%;

@@ -30,6 +30,7 @@ pub struct FlipFailedParams<T1: crate::StringSql> {
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct ActivityForAlias {
     pub action: String,
+    pub status: String,
     pub from_address: Option<String>,
     pub reason: Option<String>,
     #[serde(with = "time::serde::rfc3339")]
@@ -37,6 +38,7 @@ pub struct ActivityForAlias {
 }
 pub struct ActivityForAliasBorrowed<'a> {
     pub action: &'a str,
+    pub status: &'a str,
     pub from_address: Option<&'a str>,
     pub reason: Option<&'a str>,
     pub created_at: time::OffsetDateTime,
@@ -45,6 +47,7 @@ impl<'a> From<ActivityForAliasBorrowed<'a>> for ActivityForAlias {
     fn from(
         ActivityForAliasBorrowed {
             action,
+            status,
             from_address,
             reason,
             created_at,
@@ -52,6 +55,7 @@ impl<'a> From<ActivityForAliasBorrowed<'a>> for ActivityForAlias {
     ) -> Self {
         Self {
             action: action.into(),
+            status: status.into(),
             from_address: from_address.map(|v| v.into()),
             reason: reason.map(|v| v.into()),
             created_at,
@@ -64,6 +68,7 @@ pub struct ActivityForAliasApi {
     pub alias_id: i64,
     pub reverse_contact_id: Option<i64>,
     pub action: String,
+    pub status: String,
     pub from_address: Option<String>,
     pub message_id: Option<String>,
     pub reason: Option<String>,
@@ -75,6 +80,7 @@ pub struct ActivityForAliasApiBorrowed<'a> {
     pub alias_id: i64,
     pub reverse_contact_id: Option<i64>,
     pub action: &'a str,
+    pub status: &'a str,
     pub from_address: Option<&'a str>,
     pub message_id: Option<&'a str>,
     pub reason: Option<&'a str>,
@@ -87,6 +93,7 @@ impl<'a> From<ActivityForAliasApiBorrowed<'a>> for ActivityForAliasApi {
             alias_id,
             reverse_contact_id,
             action,
+            status,
             from_address,
             message_id,
             reason,
@@ -98,6 +105,7 @@ impl<'a> From<ActivityForAliasApiBorrowed<'a>> for ActivityForAliasApi {
             alias_id,
             reverse_contact_id,
             action: action.into(),
+            status: status.into(),
             from_address: from_address.map(|v| v.into()),
             message_id: message_id.map(|v| v.into()),
             reason: reason.map(|v| v.into()),
@@ -309,7 +317,7 @@ where
 pub struct ActivityForAliasStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn activity_for_alias() -> ActivityForAliasStmt {
     ActivityForAliasStmt(
-        "SELECT action, from_address, reason, created_at FROM email_log WHERE alias_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+        "SELECT action, status, from_address, reason, created_at FROM email_log WHERE alias_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
         None,
     )
 }
@@ -338,9 +346,10 @@ impl ActivityForAliasStmt {
             | -> Result<ActivityForAliasBorrowed, tokio_postgres::Error> {
                 Ok(ActivityForAliasBorrowed {
                     action: row.try_get(0)?,
-                    from_address: row.try_get(1)?,
-                    reason: row.try_get(2)?,
-                    created_at: row.try_get(3)?,
+                    status: row.try_get(1)?,
+                    from_address: row.try_get(2)?,
+                    reason: row.try_get(3)?,
+                    created_at: row.try_get(4)?,
                 })
             },
             mapper: |it| ActivityForAlias::from(it),
@@ -368,7 +377,7 @@ impl<'c, 'a, 's, C: GenericClient>
 pub struct ActivityForAliasApiStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn activity_for_alias_api() -> ActivityForAliasApiStmt {
     ActivityForAliasApiStmt(
-        "SELECT id, alias_id, reverse_contact_id, action, from_address, message_id, reason, created_at FROM email_log WHERE alias_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
+        "SELECT id, alias_id, reverse_contact_id, action, status, from_address, message_id, reason, created_at FROM email_log WHERE alias_id = $1 ORDER BY created_at DESC LIMIT $2 OFFSET $3",
         None,
     )
 }
@@ -400,10 +409,11 @@ impl ActivityForAliasApiStmt {
                     alias_id: row.try_get(1)?,
                     reverse_contact_id: row.try_get(2)?,
                     action: row.try_get(3)?,
-                    from_address: row.try_get(4)?,
-                    message_id: row.try_get(5)?,
-                    reason: row.try_get(6)?,
-                    created_at: row.try_get(7)?,
+                    status: row.try_get(4)?,
+                    from_address: row.try_get(5)?,
+                    message_id: row.try_get(6)?,
+                    reason: row.try_get(7)?,
+                    created_at: row.try_get(8)?,
                 })
             },
             mapper: |it| ActivityForAliasApi::from(it),

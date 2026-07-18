@@ -1,14 +1,14 @@
 -- email_log: reads + worker writes.
 
 --! activity_for_alias : (from_address?, reason?)
-SELECT action, from_address, reason, created_at
+SELECT action, status, from_address, reason, created_at
 FROM email_log
 WHERE alias_id = :alias_id
 ORDER BY created_at DESC
 LIMIT :lim OFFSET :off;
 
 --! activity_for_alias_api : (reverse_contact_id?, from_address?, message_id?, reason?)
-SELECT id, alias_id, reverse_contact_id, action, from_address, message_id,
+SELECT id, alias_id, reverse_contact_id, action, status, from_address, message_id,
        reason, created_at
 FROM email_log
 WHERE alias_id = :alias_id

@@ -17,6 +17,7 @@
             <tr>
                 <th>when</th>
                 <th>action</th>
+                <th>status</th>
                 <th>from</th>
                 <th>reason</th>
             </tr>
@@ -26,8 +27,9 @@
             <tr>
                 <td><time class="timestamp" datetime="{{ a.created_at|datetime_attribute }}">{{ a.created_at|ui_datetime }}</time></td>
                 <td>{{ a.action }}</td>
-                <td>{{ a.from_address.as_deref().unwrap_or("") }}</td>
-                <td>{{ a.reason.as_deref().unwrap_or("") }}</td>
+                <td><span class="activity-status is-{{ a.status }}">{{ a.status }}</span></td>
+                <td>{% if let Some(address) = a.from_address.as_deref() %}{{ address }}{% else %}<span class="empty-value">&mdash;</span>{% endif %}</td>
+                <td>{% if let Some(reason) = a.reason.as_deref() %}{{ reason }}{% else %}<span class="empty-value">&mdash;</span>{% endif %}</td>
             </tr>
         {%- endfor %}
         </tbody>

@@ -285,26 +285,30 @@ fn mock_activities() -> Vec<elq::ActivityForAlias> {
     vec![
         elq::ActivityForAlias {
             action: "forward".into(),
+            status: "submitted".into(),
             from_address: Some("alice@example.com".into()),
             reason: None,
             created_at: ts_ago(1),
         },
         elq::ActivityForAlias {
             action: "block".into(),
+            status: "submitted".into(),
             from_address: Some("spammer@bad.net".into()),
             reason: Some("SPF fail".into()),
             created_at: ts_ago(2),
         },
         elq::ActivityForAlias {
             action: "forward".into(),
+            status: "bounced".into(),
             from_address: Some("charlie@company.org".into()),
-            reason: None,
+            reason: Some("Mailbox unavailable".into()),
             created_at: ts_ago(4),
         },
         elq::ActivityForAlias {
             action: "reply".into(),
+            status: "failed".into(),
             from_address: None,
-            reason: Some("auto-reply sent".into()),
+            reason: Some("Upstream rejected message".into()),
             created_at: ts_ago(6),
         },
     ]
