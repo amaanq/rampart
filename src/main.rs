@@ -1,3 +1,8 @@
+#![expect(
+   clippy::missing_asserts_for_indexing,
+   reason = "Pound's derive indexes its compile-time command descriptor table"
+)]
+
 use std::{
    env,
    path::PathBuf,
@@ -7,10 +12,7 @@ use anyhow::{
    Context as _,
    Result,
 };
-use clap::{
-   Parser,
-   Subcommand,
-};
+use pound::Parse;
 use rampart::{
    admin,
    bootstrap,
@@ -22,14 +24,18 @@ use rampart::{
 };
 use tokio::runtime::Builder;
 
-#[derive(Parser)]
-#[command(name = "rampart", version, about = "Forward-only email alias manager.")]
+/// Forward-only email alias manager.
+#[derive(Parse)]
 struct Cli {
-   #[command(subcommand)]
+   #[pound(subcommand)]
    cmd: Cmd,
 }
 
-#[derive(Subcommand)]
+#[expect(
+   clippy::large_enum_variant,
+   reason = "Pound requires nested subcommands to be stored inline"
+)]
+#[derive(Parse)]
 enum Cmd {
    /// Run the HTTP server.
    Serve,
@@ -45,27 +51,27 @@ enum Cmd {
 
    /// Operator commands.
    Admin {
-      #[command(subcommand)]
-      cmd: Box<AdminCmd>,
+      #[pound(subcommand)]
+      cmd: AdminCmd,
    },
 }
 
-#[derive(Subcommand)]
+#[derive(Parse)]
 enum AdminCmd {
    /// Render the session.rcpt Sieve from current DB state.
    RenderSieve {
-      #[arg(long)]
+      #[pound(long)]
       output: Option<PathBuf>,
    },
 
    /// Create a user account.
    UserAdd {
       email:        String,
-      #[arg(long)]
+      #[pound(long)]
       password:     String,
-      #[arg(long)]
+      #[pound(long)]
       display_name: Option<String>,
-      #[arg(long)]
+      #[pound(long)]
       admin:        bool,
    },
 
@@ -81,38 +87,38 @@ enum AdminCmd {
    /// Generate a one-time invite URL.
    Invite {
       /// Optional — if set, the invite only works for this exact email.
-      #[arg(long)]
+      #[pound(long)]
       email: Option<String>,
    },
 
    /// Add a verified mailbox for a user.
    AddMailbox {
       /// Owner user's email.
-      #[arg(long = "user")]
+      #[pound(long = "user")]
       user_email:   String,
       /// Mailbox address.
       email:        String,
-      #[arg(long)]
+      #[pound(long)]
       display_name: Option<String>,
    },
 
    /// List mailboxes (optionally filtered by owning user).
    ListMailboxes {
-      #[arg(long = "user")]
+      #[pound(long = "user")]
       user_email: Option<String>,
    },
 
    /// Set the default mailbox for an alias domain.
    SetDefaultMailbox {
-      #[arg(long)]
+      #[pound(long)]
       domain:  String,
-      #[arg(long)]
+      #[pound(long)]
       mailbox: String,
    },
 
    /// Export aliases to CSV (optionally filtered by user).
    ExportAliases {
-      #[arg(long = "user")]
+      #[pound(long = "user")]
       user_email: Option<String>,
    },
 
@@ -126,45 +132,45 @@ enum AdminCmd {
    /// expired webauthn ceremonies, old `email_log` rows. Idempotent.
    Gc {
       /// Delete `email_log` rows older than this many days.
-      #[arg(long, default_value_t = rampart::admin::DEFAULT_EMAIL_LOG_DAYS)]
+      #[pound(long, default = "90")]
       email_log_days: i32,
       /// Print would-delete counts without changing state.
-      #[arg(long)]
+      #[pound(long)]
       dry_run:        bool,
    },
 
    /// Idempotently seed stalwart's JMAP registry for reply-via-alias.
    BootstrapStalwart {
       /// e.g. <http://127.0.0.1:8080> or <https://stalwart.example.com>.
-      #[arg(long)]
+      #[pound(long)]
       jmap_base_url:                  String,
-      #[arg(long, default_value = "admin")]
+      #[pound(long, default = "admin")]
       admin_username:                 String,
-      #[arg(long)]
+      #[pound(long)]
       admin_password_file:            PathBuf,
       /// Same password rampart uses for SMTP AUTH.
-      #[arg(long)]
+      #[pound(long)]
       rampart_notifier_password_file: PathBuf,
       /// e.g. rampart-notifier@rampart.email.
-      #[arg(long)]
+      #[pound(long)]
       rampart_notifier_address:       String,
-      #[arg(long, default_value = "127.0.0.1")]
+      #[pound(long, default = "127.0.0.1")]
       lmtp_address:                   String,
-      #[arg(long, default_value_t = 8024)]
+      #[pound(long, default = "8024")]
       lmtp_port:                      u16,
       /// Repeatable. Each becomes a stalwart `Domain` with auto-DKIM and
       /// a sieve rcpt-domain match → '`rampart_rcpt`'.
-      #[arg(long = "alias-domain", value_name = "DOMAIN", num_args = 0..)]
+      #[pound(long = "alias-domain", value_name = "DOMAIN")]
       alias_domains:                  Vec<String>,
       /// libpq connection string. Drives stalwart's `StoreLookup`
       /// (namespace `sql`) so `query('sql', ...)` in the sieve resolves.
-      #[arg(long)]
+      #[pound(long)]
       database_url:                   String,
       /// Rendered Sieve path — pushed into `SieveSystemScript rampart_rcpt`
       /// so stalwart doesn't depend on `%{file:...}%`.
-      #[arg(long)]
+      #[pound(long)]
       sieve_path:                     PathBuf,
-      #[arg(long)]
+      #[pound(long)]
       dry_run:                        bool,
    },
 }
@@ -202,7 +208,7 @@ async fn run(cli: Cli) -> Result<()> {
          let url = database_url()?;
          migrate::run(&url).await
       },
-      Cmd::Admin { cmd } => match *cmd {
+      Cmd::Admin { cmd } => match cmd {
          // Bootstrap takes DB params from CLI args, not env.
          AdminCmd::BootstrapStalwart {
             jmap_base_url,

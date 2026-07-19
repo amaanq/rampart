@@ -1,6 +1,6 @@
 //! rampart library crate. Entry points are `serve::serve`, `worker::run`,
 //! `migrate::run`, and the `admin::*` subcommands; the binary in
-//! `src/main.rs` is a thin clap dispatcher.
+//! `src/main.rs` is a thin pound dispatcher.
 
 mod abuse;
 mod api;

@@ -25,6 +25,7 @@ allow = [
 	"MPL-2.0",
 	"0BSD",
 	"AGPL-3.0-or-later",
+	"EUPL-1.2",
 ]
 confidence-threshold = 0.9
 private = { ignore = true }
