@@ -1,0 +1,28 @@
+:root {
+  color-scheme: light dark;
+  font-family: system-ui, sans-serif;
+  font-size: 14px;
+}
+body { margin: 0; }
+main { padding: 1rem; }
+.popup main { width: 320px; }
+.options main { max-width: 620px; margin: 2rem auto; }
+header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+header strong, h1 { display: flex; align-items: center; gap: .5rem; }
+.logo { width: 1.5em; height: 1.5em; }
+form, label { display: flex; flex-direction: column; gap: .4rem; }
+form { gap: .8rem; }
+input, select, button { box-sizing: border-box; padding: .55rem .7rem; font: inherit; }
+button { cursor: pointer; }
+button.link { padding: 0; border: 0; background: transparent; color: LinkText; }
+button.secondary { background: transparent; }
+button.danger { background: #8d2525; color: #fff; }
+.actions, .result { display: flex; gap: .5rem; align-items: center; }
+.actions { flex-wrap: wrap; }
+.status { min-height: 1.4rem; color: GrayText; }
+.result { padding: .65rem; border: 1px solid GrayText; border-radius: 5px; }
+.result code { flex: 1; overflow-wrap: anywhere; }
+.check { flex-direction: row; align-items: center; }
+.check input { width: auto; }
+.hint { margin: -.2rem 0 .2rem; color: GrayText; font-size: .9rem; }
+[hidden] { display: none !important; }

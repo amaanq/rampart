@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rampart alias</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="popup">
+  <main>
+    <header><strong><img class="logo" src="icons/rampart.svg" alt="">rampart</strong><button type="button" class="link" data-open-options>settings</button></header>
+    <div data-connect hidden>
+      <p>Connect this extension to your Rampart instance before creating aliases.</p>
+      <button type="button" data-open-options>connect Rampart</button>
+    </div>
+    <form data-create hidden>
+      <label>domain <select name="domain" required></select></label>
+      <label>mailbox <select name="mailbox_id" required></select></label>
+      <label>prefix <input name="prefix" maxlength="64" autocomplete="off" spellcheck="false" placeholder="blank generates randomly"></label>
+      <label>note <input name="note" maxlength="200" placeholder="optional site name"></label>
+      <button type="submit">create and fill</button>
+    </form>
+    <p class="status" data-status role="status"></p>
+    <div class="result" data-result hidden>
+      <code data-address></code>
+      <button type="button" class="secondary" data-copy>copy</button>
+    </div>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

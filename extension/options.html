@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rampart extension settings</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="options">
+  <main>
+    <h1><img class="logo" src="icons/rampart.svg" alt="">Rampart Email Masking</h1>
+    <p>Connect with a restricted browser-extension key from Rampart settings.</p>
+    <form data-options>
+      <label>Rampart instance URL <input type="url" name="instance" required placeholder="https://bunker.rampart.email"></label>
+      <label>extension token <input type="password" name="token" autocomplete="off" placeholder="leave blank to keep the stored token"></label>
+      <label class="check"><input type="checkbox" data-inline-assistant checked> show Rampart beside email fields</label>
+      <p class="hint">Inline mode needs access to HTTP(S) pages. Turn it off to use only the toolbar popup.</p>
+      <section data-choices hidden>
+        <label>default alias domain <select name="domain"></select></label>
+        <label>forward to <select name="mailbox_id"></select></label>
+        <label class="check"><input type="checkbox" data-remember-sites> save the website hostname as the alias note</label>
+      </section>
+      <div class="actions">
+        <button type="submit">save and test</button>
+        <button type="button" class="secondary" data-disconnect>disconnect</button>
+        <button type="button" class="danger" data-revoke>revoke key</button>
+      </div>
+    </form>
+    <p class="status" data-status role="status"></p>
+    <p><a data-open-settings href="#" hidden>Open Rampart settings</a></p>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

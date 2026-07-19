@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Rampart Email Masking",
+  "version": "0.1.0",
+  "description": "Create and fill Rampart email aliases during sign-up.",
+  "permissions": ["activeTab", "clipboardWrite", "scripting", "storage"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "Mask email with Rampart",
+    "default_popup": "popup.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  }
+}

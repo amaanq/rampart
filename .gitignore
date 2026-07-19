@@ -56,6 +56,11 @@
 !templates/
 !templates/**
 
+# Browser extension
+!extension/
+!extension/**
+extension/dist/
+
 # Nix + deploy
 !nix/
 !nix/**
