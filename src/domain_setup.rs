@@ -1,6 +1,9 @@
 //! Expected DNS records and verification state for alias-domain onboarding.
 
-use std::collections::BTreeMap;
+use std::collections::{
+   BTreeMap,
+   BTreeSet,
+};
 
 use anyhow::{
    Context as _,
@@ -283,12 +286,12 @@ fn provider_fields(kind: &str, value: &str) -> (String, &'static str, Option<u16
 }
 
 pub async fn check(records: &[SetupRecord]) -> Result<DnsStatus> {
-   let resolver = verification_resolver()?;
+   let resolvers = verification_resolvers()?;
    let mut tasks = JoinSet::new();
    for record in records.iter().cloned() {
-      let resolver = resolver.clone();
+      let resolvers = resolvers.clone();
       tasks.spawn(async move {
-         let result = check_one(&resolver, &record).await;
+         let result = check_one(&resolvers, &record).await;
          (record.id, result)
       });
    }
@@ -301,42 +304,77 @@ pub async fn check(records: &[SetupRecord]) -> Result<DnsStatus> {
    Ok(status)
 }
 
-fn verification_resolver() -> Result<TokioResolver> {
-   TokioResolver::builder_with_config(
-      verification_resolver_config(),
-      TokioRuntimeProvider::default(),
-   )
-   .build()
-   .context("building DNS verification resolver")
-}
-
-fn verification_resolver_config() -> ResolverConfig {
-   let mut config = ResolverConfig::default();
-   for ip in [CLOUDFLARE.ips[0], GOOGLE.ips[0]] {
-      let mut name_server = NameServerConfig::udp_and_tcp(ip);
-      name_server.trust_negative_responses = false;
-      config.add_name_server(name_server);
+pub fn retain_found_during_setup(current: &mut DnsStatus, previous: &DnsStatus) {
+   for (id, observation) in current {
+      let Some(previous_observation) = previous.get(id) else {
+         continue;
+      };
+      if previous_observation.status == RecordStatus::Found
+         && previous_observation.expected == observation.expected
+      {
+         observation.status = RecordStatus::Found;
+         observation
+            .observed
+            .extend(previous_observation.observed.iter().cloned());
+         observation.observed.sort();
+         observation.observed.dedup();
+      }
    }
-   config
 }
 
-async fn check_one(resolver: &TokioResolver, record: &SetupRecord) -> Result<DnsObservation> {
+/// One resolver per upstream, queried independently.
+fn verification_resolvers() -> Result<Vec<TokioResolver>> {
+   [CLOUDFLARE.ips[0], GOOGLE.ips[0]]
+      .into_iter()
+      .map(|ip| {
+         let mut name_server = NameServerConfig::udp_and_tcp(ip);
+         name_server.trust_negative_responses = false;
+         let config = ResolverConfig::from_parts(None, Vec::new(), vec![name_server]);
+         TokioResolver::builder_with_config(config, TokioRuntimeProvider::default())
+            .build()
+            .context("building DNS verification resolver")
+      })
+      .collect()
+}
+
+async fn check_one(resolvers: &[TokioResolver], record: &SetupRecord) -> Result<DnsObservation> {
    let fqdn = absolute_dns_name(&record.fqdn);
-   let observed = match record.kind {
-      "MX" => match resolver.mx_lookup(fqdn.as_str()).await {
-         Ok(lookup) => lookup
+   let mut observed_sets = Vec::new();
+   let mut last_error = None;
+   for resolver in resolvers {
+      match lookup(resolver, record, fqdn.as_str()).await {
+         Ok(values) => observed_sets.push(values),
+         Err(error) => last_error = Some(error),
+      }
+   }
+   if observed_sets.is_empty() {
+      let error =
+         last_error.unwrap_or_else(|| anyhow::anyhow!("no verification resolvers configured"));
+      return Err(error.context(format!("looking up {} for {}", record.kind, record.fqdn)));
+   }
+   Ok(merge_observation(
+      record.kind,
+      &record.value,
+      &observed_sets,
+   ))
+}
+
+async fn lookup(resolver: &TokioResolver, record: &SetupRecord, fqdn: &str) -> Result<Vec<String>> {
+   match record.kind {
+      "MX" => match resolver.mx_lookup(fqdn).await {
+         Ok(lookup) => Ok(lookup
             .answers()
             .iter()
             .filter_map(|answer| match &answer.data {
                &RData::MX(ref mx) => Some(format!("{} {}", mx.preference, mx.exchange)),
                _ => None,
             })
-            .collect(),
-         Err(error) if error.is_no_records_found() => Vec::new(),
-         Err(error) => return Err(error).context(format!("looking up MX for {}", record.fqdn)),
+            .collect()),
+         Err(error) if error.is_no_records_found() => Ok(Vec::new()),
+         Err(error) => Err(error).context(format!("looking up MX for {}", record.fqdn)),
       },
-      "TXT" => match resolver.txt_lookup(fqdn.as_str()).await {
-         Ok(lookup) => lookup
+      "TXT" => match resolver.txt_lookup(fqdn).await {
+         Ok(lookup) => Ok(lookup
             .answers()
             .iter()
             .filter_map(|answer| match &answer.data {
@@ -351,17 +389,26 @@ async fn check_one(resolver: &TokioResolver, record: &SetupRecord) -> Result<Dns
                   .collect::<Vec<_>>();
                String::from_utf8_lossy(&bytes).into_owned()
             })
-            .collect(),
-         Err(error) if error.is_no_records_found() => Vec::new(),
-         Err(error) => {
-            return Err(error).context(format!("looking up TXT for {}", record.fqdn));
-         },
+            .collect()),
+         Err(error) if error.is_no_records_found() => Ok(Vec::new()),
+         Err(error) => Err(error).context(format!("looking up TXT for {}", record.fqdn)),
       },
       kind => anyhow::bail!("unsupported DNS record type {kind}"),
-   };
+   }
+}
+
+/// Fold every resolver's observations into one deterministic verdict.
+fn merge_observation(kind: &str, expected: &str, observed_sets: &[Vec<String>]) -> DnsObservation {
+   let observed = observed_sets
+      .iter()
+      .flatten()
+      .cloned()
+      .collect::<BTreeSet<_>>()
+      .into_iter()
+      .collect::<Vec<String>>();
    let found = observed
       .iter()
-      .any(|value| values_match(record.kind, value, &record.value));
+      .any(|value| values_match(kind, value, expected));
    let status = if found {
       RecordStatus::Found
    } else if observed.is_empty() {
@@ -369,11 +416,11 @@ async fn check_one(resolver: &TokioResolver, record: &SetupRecord) -> Result<Dns
    } else {
       RecordStatus::Mismatch
    };
-   Ok(DnsObservation {
+   DnsObservation {
       status,
-      expected: record.value.clone(),
+      expected: expected.to_owned(),
       observed,
-   })
+   }
 }
 
 fn absolute_dns_name(name: &str) -> String {
@@ -468,5 +515,36 @@ mod tests {
          provider_fields("MX", "10 mx.rampart.email."),
          ("mx.rampart.email".to_owned(), "mail server", Some(10))
       );
+   }
+
+   #[test]
+   fn dns_observations_are_stable_within_and_across_checks() {
+      let wrong = "v=spf1 -all".to_owned();
+      let cases = [
+         (
+            vec![vec![SPF_VALUE.to_owned()], Vec::new()],
+            RecordStatus::Found,
+         ),
+         (
+            vec![vec![wrong.clone()], vec![SPF_VALUE.to_owned()]],
+            RecordStatus::Found,
+         ),
+         (vec![Vec::new(), Vec::new()], RecordStatus::Pending),
+         (vec![vec![wrong], Vec::new()], RecordStatus::Mismatch),
+      ];
+      for (sets, expected) in cases {
+         assert_eq!(merge_observation("TXT", SPF_VALUE, &sets).status, expected);
+      }
+
+      let previous = DnsStatus::from([(
+         "spf".to_owned(),
+         merge_observation("TXT", SPF_VALUE, &[vec![SPF_VALUE.to_owned()]]),
+      )]);
+      let mut current = DnsStatus::from([(
+         "spf".to_owned(),
+         merge_observation("TXT", SPF_VALUE, &[vec!["v=spf1 -all".to_owned()]]),
+      )]);
+      retain_found_during_setup(&mut current, &previous);
+      assert_eq!(current["spf"].status, RecordStatus::Found);
    }
 }

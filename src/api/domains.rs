@@ -257,9 +257,12 @@ pub(super) async fn domain_check(
       row.dns_checked_at,
       row.dns_verified_at,
    );
-   let status = domain_setup::check(&expected.records)
+   let mut status = domain_setup::check(&expected.records)
       .await
       .map_err(ApiError::Internal)?;
+   if row.dns_verified_at.is_none() {
+      domain_setup::retain_found_during_setup(&mut status, &previous_status);
+   }
    let now = OffsetDateTime::now_utc();
    let checked = domain_setup::build(
       row.id,
