@@ -1,6 +1,7 @@
 // This file was generated with `cornucopia`. Do not modify.
 
 pub mod aliases;
+pub mod api_idempotency;
 pub mod api_keys;
 pub mod contacts;
 pub mod domains;

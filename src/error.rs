@@ -2,12 +2,17 @@
 //! validation failures into appropriate responses.
 
 use axum::{
-   http::StatusCode,
+   Json,
+   http::{
+      StatusCode,
+      header,
+   },
    response::{
       IntoResponse,
       Response,
    },
 };
+use serde_json::json;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
@@ -17,6 +22,8 @@ pub enum ApiError {
    BadRequest(String),
    #[error("conflict: {0}")]
    Conflict(String),
+   #[error("rate limited: {0}")]
+   RateLimited(String),
    #[error("database error: {0}")]
    Db(#[from] tokio_postgres::Error),
    #[error("pool error: {0}")]
@@ -37,6 +44,14 @@ impl IntoResponse for ApiError {
          Self::NotFound => (StatusCode::NOT_FOUND, "not found".to_owned()),
          Self::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
          Self::Conflict(msg) => (StatusCode::CONFLICT, msg),
+         Self::RateLimited(message) => {
+            return (
+               StatusCode::TOO_MANY_REQUESTS,
+               [(header::RETRY_AFTER, "3600")],
+               Json(json!({"error": "rate_limited", "message": message})),
+            )
+               .into_response();
+         },
          Self::Db(err) => {
             tracing::error!(error = ?err, "db error");
             (

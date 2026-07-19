@@ -125,6 +125,7 @@ pub async fn serve(cfg: Config) -> Result<()> {
          state.clone(),
          auth::origin_layer,
       ))
+      .layer(middleware::from_fn(auth::scope_layer))
       .layer(middleware::from_fn_with_state(
          state.clone(),
          auth::auth_layer,

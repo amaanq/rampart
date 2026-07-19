@@ -26,6 +26,7 @@ use axum::{
    routing,
 };
 use rampart_codegen::queries::{
+   api_keys as akq,
    contacts as cq,
    domains as dq,
    email_log as elq,
@@ -294,6 +295,20 @@ fn mock_passkeys() -> Vec<wq::ListForUser> {
          last_used_at: None,
       },
    ]
+}
+
+fn mock_api_keys() -> Vec<akq::ApiKeyRow> {
+   vec![akq::ApiKeyRow {
+      id:           1,
+      name:         "Firefox on laptop".into(),
+      scopes:       vec!["alias:create".into(), "extension:read".into()],
+      kind:         "extension".into(),
+      token_prefix: Some("rpt_example1".into()),
+      last_used_at: Some(ts_ago(2)),
+      revoked_at:   None,
+      created_at:   ts_ago(168),
+      expires_at:   None,
+   }]
 }
 
 fn mock_admin_users() -> Vec<uq::ListAdminCompact> {
@@ -924,11 +939,13 @@ async fn settings_page(Query(query): Query<PreviewListQuery>) -> Response {
       user_email: String,
       is_admin:   bool,
       passkeys:   Vec<wq::ListForUser>,
+      api_keys:   Vec<akq::ApiKeyRow>,
    }
    render(&Page {
       user_email: user_email(),
       is_admin:   is_admin(),
       passkeys:   preview_list(&query, mock_passkeys()),
+      api_keys:   preview_list(&query, mock_api_keys()),
    })
 }
 

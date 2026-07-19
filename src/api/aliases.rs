@@ -8,11 +8,15 @@ use axum::{
       Query,
       State,
    },
-   http::StatusCode,
+   http::{
+      HeaderMap,
+      StatusCode,
+   },
 };
 use deadpool_postgres::Client;
 use rampart_codegen::queries::{
    aliases,
+   api_idempotency,
    domains,
    email_log,
    mailboxes,
@@ -39,6 +43,7 @@ use super::shared::{
 };
 use crate::{
    AppState,
+   abuse,
    auth::Principal,
    error::{
       ApiError,
@@ -274,29 +279,86 @@ pub(super) struct AliasRandom {
    note:       Option<String>,
    #[serde(default)]
    mailbox_id: Option<i64>,
+   #[serde(default)]
+   prefix:     Option<String>,
 }
 
 pub(super) async fn alias_random(
    State(state): State<AppState>,
    Extension(principal): Extension<Principal>,
+   headers: HeaderMap,
    Json(body): Json<AliasRandom>,
 ) -> ApiResult<(StatusCode, Json<AliasView>)> {
+   let idempotency_key = headers
+      .get("idempotency-key")
+      .and_then(|value| value.to_str().ok())
+      .map(str::trim)
+      .filter(|value| !value.is_empty());
+   if idempotency_key.is_some_and(|value| value.len() > 128) {
+      return Err(ApiError::BadRequest(
+         "Idempotency-Key exceeds 128 characters".into(),
+      ));
+   }
+   if principal.is_restricted_api_key() && idempotency_key.is_none() {
+      return Err(ApiError::BadRequest(
+         "Idempotency-Key is required for extension API keys".into(),
+      ));
+   }
+
    let mut conn = state.pool.get().await?;
+   if let (Some(api_key_id), Some(idempotency_key)) = (principal.api_key_id, idempotency_key)
+      && let Some(existing) = api_idempotency::alias_id()
+         .bind(&conn, &api_key_id, &idempotency_key)
+         .opt()
+         .await?
+         .flatten()
+   {
+      let row = aliases::by_id().bind(&conn, &existing).one().await?;
+      return Ok((StatusCode::CREATED, Json(row.into())));
+   }
+
+   let prefix = shared::trimmed_nonempty(body.prefix);
+   if let Some(prefix) = prefix.as_deref() {
+      shared::validate_local_part_fragment(prefix, "prefix")?;
+   }
+
+   let user_rate_key = format!("alias_create:user:{}", principal.user_id);
+   let user_allowed = abuse::check(&state.pool, &user_rate_key, abuse::ALIAS_CREATE)
+      .await
+      .map_err(ApiError::Internal)?;
+   let key_allowed = if let Some(api_key_id) = principal.api_key_id {
+      abuse::check(
+         &state.pool,
+         &format!("alias_create:key:{api_key_id}"),
+         abuse::ALIAS_CREATE,
+      )
+      .await
+      .map_err(ApiError::Internal)?
+   } else {
+      true
+   };
+   if !user_allowed || !key_allowed {
+      return Err(ApiError::RateLimited(
+         "Alias creation limit reached. Try again later.".into(),
+      ));
+   }
+
    let (dom, mb_id) =
       resolve_domain_and_mailbox(&conn, &principal, body.domain, body.mailbox_id).await?;
-   let local = random_local_part(&dom.random_prefix);
+   let local = prefix.unwrap_or_else(|| random_local_part(&dom.random_prefix));
    let addr = format!("{local}@{}", dom.domain);
    let note = shared::trimmed_nonempty(body.note);
 
-   let id = insert_alias(
-      &mut conn,
-      principal.user_id,
-      &addr,
-      dom.id,
-      mb_id,
-      &note,
-      false,
-   )
+   let id = insert_alias(&mut conn, AliasInsert {
+      user_id: principal.user_id,
+      addr: &addr,
+      domain_id: dom.id,
+      mailbox_id: mb_id,
+      note: note.as_deref(),
+      auto_created: false,
+      api_key_id: principal.api_key_id,
+      idempotency_key,
+   })
    .await?;
    let row = aliases::by_id().bind(&conn, &id).one().await?;
    Ok((StatusCode::CREATED, Json(row.into())))
@@ -338,34 +400,63 @@ pub(super) async fn alias_custom_new(
    let addr = format!("{local}@{}", dom.domain);
    let note = shared::trimmed_nonempty(body.note);
 
-   let id = insert_alias(
-      &mut conn,
-      principal.user_id,
-      &addr,
-      dom.id,
-      mb_id,
-      &note,
-      false,
-   )
+   let id = insert_alias(&mut conn, AliasInsert {
+      user_id:         principal.user_id,
+      addr:            &addr,
+      domain_id:       dom.id,
+      mailbox_id:      mb_id,
+      note:            note.as_deref(),
+      auto_created:    false,
+      api_key_id:      None,
+      idempotency_key: None,
+   })
    .await?;
    let row = aliases::by_id().bind(&conn, &id).one().await?;
    Ok((StatusCode::CREATED, Json(row.into())))
 }
 
-#[expect(
-   clippy::ref_option,
-   reason = "note is forwarded directly as a bind parameter to the generated query"
-)]
-async fn insert_alias(
-   conn: &mut Client,
-   user_id: i64,
-   addr: &str,
-   domain_id: i64,
-   mailbox_id: i64,
-   note: &Option<String>,
-   auto_created: bool,
-) -> ApiResult<i64> {
+struct AliasInsert<'a> {
+   user_id:         i64,
+   addr:            &'a str,
+   domain_id:       i64,
+   mailbox_id:      i64,
+   note:            Option<&'a str>,
+   auto_created:    bool,
+   api_key_id:      Option<i64>,
+   idempotency_key: Option<&'a str>,
+}
+
+async fn insert_alias(conn: &mut Client, alias: AliasInsert<'_>) -> ApiResult<i64> {
+   let AliasInsert {
+      user_id,
+      addr,
+      domain_id,
+      mailbox_id,
+      note,
+      auto_created,
+      api_key_id,
+      idempotency_key,
+   } = alias;
    let txn = conn.transaction().await?;
+   if let (Some(api_key_id), Some(idempotency_key)) = (api_key_id, idempotency_key) {
+      let claimed = api_idempotency::claim()
+         .bind(&txn, &api_key_id, &idempotency_key)
+         .opt()
+         .await?;
+      if claimed.is_none() {
+         let existing = api_idempotency::alias_id()
+            .bind(&txn, &api_key_id, &idempotency_key)
+            .one()
+            .await?
+            .ok_or_else(|| {
+               ApiError::Internal(anyhow::anyhow!(
+                  "idempotency claim completed without an alias"
+               ))
+            })?;
+         txn.commit().await?;
+         return Ok(existing);
+      }
+   }
    txn.execute("SELECT pg_advisory_xact_lock($1)", &[&quota::lock_id(
       LOCK_CLASS_ALIAS_CAP,
       user_id,
@@ -391,7 +482,7 @@ async fn insert_alias(
          &addr,
          &domain_id,
          &mailbox_id,
-         note,
+         &note,
          &auto_created,
       )
       .one()
@@ -403,6 +494,12 @@ async fn insert_alias(
             shared::raise_exception_as_bad_request(err)
          }
       })?;
+
+   if let (Some(api_key_id), Some(idempotency_key)) = (api_key_id, idempotency_key) {
+      api_idempotency::finish()
+         .bind(&txn, &id, &api_key_id, &idempotency_key)
+         .await?;
+   }
 
    txn.commit().await?;
    Ok(id)

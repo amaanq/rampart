@@ -20,6 +20,7 @@ use axum::{
 };
 use rampart_codegen::queries::{
    aliases,
+   api_keys,
    contacts,
    domains,
    email_log,
@@ -103,6 +104,7 @@ pub struct DomainRowView {
 
 pub type MailboxRowView = mailboxes::MailboxRow;
 pub type PasskeyRowView = webauthn::ListForUser;
+pub type ApiKeyRowView = api_keys::ApiKeyRow;
 pub type AdminUserRowView = users::ListAdminCompact;
 pub type AdminDomainRowView = domains::ListAdmin;
 pub type ContactRowView = contacts::ListForAlias;
@@ -318,6 +320,7 @@ struct SettingsPage {
    user_email: String,
    is_admin:   bool,
    passkeys:   Vec<PasskeyRowView>,
+   api_keys:   Vec<ApiKeyRowView>,
 }
 
 async fn settings_page(
@@ -330,10 +333,15 @@ async fn settings_page(
       .bind(&conn, &principal.user_id)
       .all()
       .await?;
+   let api_keys = api_keys::list_for_user()
+      .bind(&conn, &principal.user_id)
+      .all()
+      .await?;
    render(&SettingsPage {
       user_email,
       is_admin: principal.is_admin,
       passkeys,
+      api_keys,
    })
 }
 

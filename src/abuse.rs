@@ -43,6 +43,10 @@ pub const DOMAIN_DNS_CHECK: Limit = Limit {
    window: Duration::from_mins(1),
    max:    20,
 };
+pub const ALIAS_CREATE: Limit = Limit {
+   window: Duration::from_hours(1),
+   max:    30,
+};
 
 /// Returns `Ok(true)` if the hit is allowed (within cap), `Ok(false)` if
 /// throttled.

@@ -130,7 +130,9 @@
                 } >> "$PGDATA/postgresql.conf"
                 pg_ctl -D "$PGDATA" -l "$TMPDIR/server.log" start
                 createdb -h "$PGHOST" rampart_check
-                psql -h "$PGHOST" -d rampart_check -f ${./migrations/V001__init.sql} >/dev/null
+                for migration in ${./migrations}/*.sql; do
+                  psql -h "$PGHOST" -d rampart_check -f "$migration" >/dev/null
+                done
 
                 mkdir -p "$TMPDIR/work"
                 cp -r ${./queries} "$TMPDIR/work/queries"

@@ -22,8 +22,10 @@ use crate::{
 
 mod admin;
 mod aliases;
+mod api_keys;
 mod contacts;
 mod domains;
+mod extension;
 mod mailboxes;
 mod shared;
 mod user;
@@ -50,6 +52,20 @@ pub fn router() -> Router<AppState> {
 
    Router::new()
         .route("/api/v1/user/info", get(user::user_info))
+        .route("/api/v1/user/api-keys", get(api_keys::api_keys_list))
+        .route("/api/v1/user/api-keys", post(api_keys::api_key_create))
+        .route(
+            "/api/v1/user/api-keys/{id}",
+            delete(api_keys::api_key_revoke),
+        )
+        .route(
+            "/api/v1/api-key/self",
+            delete(api_keys::api_key_revoke_self),
+        )
+        .route(
+            "/api/v1/extension/bootstrap",
+            get(extension::extension_bootstrap),
+        )
         // aliases (user-scoped)
         .route("/api/v1/aliases", get(aliases::aliases_list))
         .route("/api/v1/aliases/{id}", get(aliases::alias_get))
@@ -61,6 +77,7 @@ pub fn router() -> Router<AppState> {
             get(aliases::alias_activities),
         )
         .route("/api/v1/alias/random", post(aliases::alias_random))
+        .route("/api/v1/alias/prefix", post(aliases::alias_random))
         .route("/api/v1/alias/custom/new", post(aliases::alias_custom_new))
         // mailboxes (user-scoped)
         .route("/api/v1/mailboxes", get(mailboxes::mailboxes_list))

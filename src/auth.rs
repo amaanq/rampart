@@ -20,6 +20,7 @@ use std::{
 };
 
 use axum::{
+   Json,
    body::Body,
    extract::{
       FromRequestParts,
@@ -35,7 +36,10 @@ use axum::{
       uri::PathAndQuery,
    },
    middleware::Next,
-   response::Response,
+   response::{
+      IntoResponse as _,
+      Response,
+   },
 };
 use data_encoding::{
    BASE64,
@@ -52,6 +56,7 @@ use rand::{
    TryRng as _,
    rngs::SysRng,
 };
+use serde_json::json;
 use time::OffsetDateTime;
 
 use crate::{
@@ -68,9 +73,27 @@ pub const SESSION_LIFETIME_DAYS: i64 = 30;
 
 #[derive(Clone, Debug)]
 pub struct Principal {
-   pub user_id:  i64,
-   pub is_admin: bool,
-   pub via:      AuthVia,
+   pub user_id:    i64,
+   pub is_admin:   bool,
+   pub via:        AuthVia,
+   pub api_key_id: Option<i64>,
+   pub scopes:     Vec<String>,
+}
+
+impl Principal {
+   #[must_use]
+   pub fn has_scope(&self, scope: &str) -> bool {
+      self.api_key_id.is_none()
+         || self
+            .scopes
+            .iter()
+            .any(|candidate| candidate == "*" || candidate == scope)
+   }
+
+   #[must_use]
+   pub fn is_restricted_api_key(&self) -> bool {
+      self.api_key_id.is_some() && !self.scopes.iter().any(|scope| scope == "*")
+   }
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -159,6 +182,20 @@ pub fn hash_api_key(token: &str) -> Vec<u8> {
    Hash::hash(token.as_bytes()).to_vec()
 }
 
+#[must_use]
+/// Generate a server-side API token with 256 bits of system randomness.
+///
+/// # Panics
+///
+/// Panics if the operating system random number generator fails.
+pub fn generate_api_key_token() -> String {
+   let mut bytes = [0_u8; 32];
+   SysRng
+      .try_fill_bytes(&mut bytes)
+      .expect("SysRng must not fail");
+   format!("rpt_{}", BASE64URL_NOPAD.encode(&bytes))
+}
+
 /// Argon2id PHC hash. Used at signup, password change/reset.
 ///
 /// # Errors
@@ -227,9 +264,11 @@ async fn resolve_basic(
       .is_fresh(user.id, password.as_bytes(), hash)
    {
       return Ok(Some(Principal {
-         user_id:  user.id,
-         is_admin: user.is_admin,
-         via:      AuthVia::Basic,
+         user_id:    user.id,
+         is_admin:   user.is_admin,
+         via:        AuthVia::Basic,
+         api_key_id: None,
+         scopes:     Vec::new(),
       }));
    }
    if argon2::verify_encoded(hash, password.as_bytes()).unwrap_or(false) {
@@ -237,9 +276,11 @@ async fn resolve_basic(
          .verify_cache
          .record(user.id, password.as_bytes(), hash);
       return Ok(Some(Principal {
-         user_id:  user.id,
-         is_admin: user.is_admin,
-         via:      AuthVia::Basic,
+         user_id:    user.id,
+         is_admin:   user.is_admin,
+         via:        AuthVia::Basic,
+         api_key_id: None,
+         scopes:     Vec::new(),
       }));
    }
    Ok(None)
@@ -256,10 +297,13 @@ async fn resolve_bearer(state: &AppState, token: &str) -> Result<Option<Principa
       return Ok(None);
    };
    let _ = api_keys::bump_last_used().bind(&conn, &digest).await;
+   let unrestricted = row.scopes.iter().any(|scope| scope == "*");
    Ok(Some(Principal {
-      user_id:  row.user_id,
-      is_admin: row.is_admin,
-      via:      AuthVia::Bearer,
+      user_id:    row.user_id,
+      is_admin:   row.is_admin && unrestricted,
+      via:        AuthVia::Bearer,
+      api_key_id: Some(row.api_key_id),
+      scopes:     row.scopes,
    }))
 }
 
@@ -285,9 +329,11 @@ async fn resolve_cookie(
       .bind(&conn, &new_expiry, &session_id_vec)
       .await;
    Ok(Some(Principal {
-      user_id:  row.user_id,
-      is_admin: row.is_admin,
-      via:      AuthVia::Cookie,
+      user_id:    row.user_id,
+      is_admin:   row.is_admin,
+      via:        AuthVia::Cookie,
+      api_key_id: None,
+      scopes:     Vec::new(),
    }))
 }
 
@@ -362,6 +408,37 @@ pub async fn auth_layer(
             .body(Body::from("500 auth error"))
             .unwrap()
       },
+   }
+}
+
+pub async fn scope_layer(req: Request<Body>, next: Next) -> Response {
+   let Some(principal) = req.extensions().get::<Principal>() else {
+      return next.run(req).await;
+   };
+   if !principal.is_restricted_api_key() {
+      return next.run(req).await;
+   }
+
+   let required = match (req.method(), req.uri().path()) {
+      (&Method::GET, "/api/v1/extension/bootstrap") => Some("extension:read"),
+      (&Method::POST, "/api/v1/alias/random" | "/api/v1/alias/prefix") => Some("alias:create"),
+      (&Method::DELETE, "/api/v1/api-key/self") => None,
+      _ => {
+         return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "insufficient_scope"})),
+         )
+            .into_response();
+      },
+   };
+   if required.is_none_or(|scope| principal.has_scope(scope)) {
+      next.run(req).await
+   } else {
+      (
+         StatusCode::FORBIDDEN,
+         Json(json!({"error": "insufficient_scope"})),
+      )
+         .into_response()
    }
 }
 

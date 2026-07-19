@@ -332,6 +332,17 @@ section { margin-bottom: 2em; }
     align-self: auto;
     margin: 0;
 }
+.api-key-secret {
+    margin-top: 1rem;
+    padding: .75rem;
+    border: 1px solid #b9ddc2;
+    border-radius: 6px;
+    background: #eef8f0;
+}
+.api-key-secret p { margin: 0 0 .5rem; }
+.api-key-secret div { display: flex; align-items: center; gap: .5rem; }
+.api-key-secret code { overflow-wrap: anywhere; }
+.api-keys-table { margin-top: 1rem; }
 
 form { display: flex; flex-wrap: wrap; gap: .75em; align-items: end; }
 main.auth form { flex-direction: column; align-items: stretch; text-align: left; }

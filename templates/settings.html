@@ -62,5 +62,51 @@
     </table>
     {% endif %}
 </section>
+
+<section class="card" data-api-keys>
+    <h2>browser extension keys</h2>
+    <p class="hint">Limited to reading extension setup and creating random aliases. Tokens are shown once.</p>
+    <form data-api-key-create>
+        <label>name <input type="text" name="name" maxlength="80" required placeholder="e.g. Firefox on laptop"></label>
+        <label>expiration
+            <select name="expiry_days">
+                <option value="">never</option>
+                <option value="30">30 days</option>
+                <option value="90">90 days</option>
+                <option value="365">1 year</option>
+            </select>
+        </label>
+        <button type="submit">create extension key</button>
+        <p class="form-status" data-api-key-status role="status" aria-live="polite"></p>
+    </form>
+    <div class="api-key-secret" data-api-key-secret hidden>
+        <p><strong>Copy this token now. It will not be shown again.</strong></p>
+        <div><code data-api-key-token></code><button type="button" class="secondary" data-api-key-copy>copy</button></div>
+    </div>
+    {% if !api_keys.is_empty() %}
+    <table class="api-keys-table"
+           data-empty-message="No API keys created yet."
+           data-empty-class="hint">
+        <thead><tr><th>name</th><th>token</th><th>expires</th><th>last used</th><th></th></tr></thead>
+        <tbody>
+        {%- for k in api_keys %}
+            <tr>
+                <td>{{ k.name }}{% if k.revoked_at.is_some() %} (revoked){% endif %}</td>
+                <td><code>{% if let Some(prefix) = k.token_prefix %}{{ prefix }}…{% else %}legacy{% endif %}</code></td>
+                <td>{% if let Some(t) = k.expires_at %}<time class="timestamp" datetime="{{ t|datetime_attribute }}">{{ t|ui_datetime }}</time>{% else %}never{% endif %}</td>
+                <td>{% if let Some(t) = k.last_used_at %}<time class="timestamp" datetime="{{ t|datetime_attribute }}">{{ t|ui_datetime }}</time>{% else %}never{% endif %}</td>
+                <td>{% if k.revoked_at.is_none() %}<button class="danger"
+                            hx-delete="/api/v1/user/api-keys/{{ k.id }}"
+                            hx-disabled-elt="this"
+                            data-reload="no"
+                            data-remove-closest="tr"
+                            hx-confirm="revoke API key {{ k.name }}?">revoke</button>{% endif %}</td>
+            </tr>
+        {%- endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</section>
 <script src="/static/webauthn.js?v=20260718" defer></script>
+<script src="/static/api-keys.js?v=20260719" defer></script>
 {% endblock %}
