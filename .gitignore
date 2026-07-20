@@ -1,4 +1,3 @@
-# Ignore everything; whitelist real project files explicitly.
 *
 
 # Top-level
@@ -16,25 +15,21 @@
 !flake.nix
 !rust-toolchain.toml
 
-# Cargo config + CI
+# Cargo + CI
 !.cargo/
 !.cargo/**
 !.github/
 !.github/**
 
-# Tack-managed Nix inputs
+# Tack
 !.tack/
 !.tack/default.nix
 !.tack/pins.toml
 !.tack/pins.lock.json
 
-# Source
-!src/
-!src/**
-
-# Tests
-!tests/
-!tests/**
+# Rust crates
+!crates/
+!crates/**
 
 # Schema + queries
 !migrations/
@@ -42,19 +37,9 @@
 !queries/
 !queries/**
 
-# Cornucopia-generated codegen — committed for reproducible builds.
-# target/ and Cargo.lock inside stay out via the "*" default.
-!db/
-!db/rampart-codegen/
-!db/rampart-codegen/Cargo.toml
-!db/rampart-codegen/src/
-!db/rampart-codegen/src/**
-
-# Static + templates
+# Static assets
 !static/
 !static/**
-!templates/
-!templates/**
 
 # Browser extension
 !extension/

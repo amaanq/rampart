@@ -9,7 +9,7 @@ use anyhow::{
 
 use crate::db;
 
-refinery::embed_migrations!("migrations");
+refinery::embed_migrations!("../../migrations");
 
 // Re-export the runner so integration tests can reuse the embedded
 // migrations without invoking `embed_migrations!` in their own
