@@ -470,7 +470,7 @@ pub(super) async fn ensure_domain_id(
 }
 
 /// libpq connection string → `PostgreSQL` `LookupStore` params. Stalwart
-/// connects as the `stalwart-mail` role via unix-peer auth (V001 grants
+/// connects as the `stalwart-mail` role via unix-peer auth (the schema grants
 /// it just enough EXECUTE+SELECT for the sieve `query()` call), so the
 /// URL's user is deliberately dropped.
 struct PgParams {

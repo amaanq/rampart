@@ -52,7 +52,7 @@ inbound envelope sender and gives the worker access to Stalwart's
 ## Deployment
 
 The documented deployment path is the included NixOS module. It provisions the
-Rampart web service, LMTP worker, migrations, Sieve renderer, Stalwart registry
+Rampart web service, LMTP worker, Sieve renderer, Stalwart registry
 bootstrap, garbage collection, PostgreSQL backup timer, and optional nginx
 virtual host.
 
@@ -181,8 +181,9 @@ RAMPART_REQUIRE_DB_TESTS=1 cargo test
 Without `RAMPART_REQUIRE_DB_TESTS=1`, database tests are skipped when PostgreSQL
 isn't available. The reason being that this is useful for a quick unit-test pass.
 
-SQL lives in `queries/` and is compiled into typed Rust bindings by Cornucopia.
-After changing a query or migration, regenerate the checked-in crate.
+The canonical schema lives in `crates/rampart/schema.sql`. Application queries
+live in `queries/` and are compiled into typed Rust bindings by Cornucopia.
+After changing the schema or a query, regenerate the checked-in crate.
 
 ```bash
 cornucopia live "$RAMPART_TEST_DB_URL"
@@ -190,13 +191,12 @@ cornucopia live "$RAMPART_TEST_DB_URL"
 
 ## Commands
 
-The CLI has five top-level commands.
+The CLI has four top-level commands.
 
 ```text
 rampart serve      run the HTTP server and dashboard
 rampart preview    run the mock UI without external services
 rampart worker     run the LMTP rewrite/resubmit worker
-rampart migrate    apply pending PostgreSQL migrations
 rampart admin ...  users, invites, mailboxes, import/export, GC, and bootstrap
 ```
 

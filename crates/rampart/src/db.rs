@@ -1,5 +1,6 @@
 //! Postgres connection pool and the typed row structs we actually use.
-//! Pool via deadpool-postgres; dedicated client for migrations.
+//!
+//! Pool via deadpool-postgres; dedicated clients for operator commands.
 //! Phase-1 deployment uses local Unix-socket postgres with `NoTls`.
 
 use anyhow::{

@@ -6,7 +6,10 @@
 
 mod support;
 
-use support::TestDb;
+use support::{
+   TestDb,
+   apply_schema,
+};
 
 // Shared with all DB-backed suites — see TestDb::or_skip docs.
 macro_rules! test_db {
@@ -54,16 +57,28 @@ async fn seed_basic(
 }
 
 #[tokio::test]
-async fn migrations_apply_cleanly() {
+async fn schema_applies_cleanly() {
    let db = test_db!();
    let client = db.pool.get().await.unwrap();
+   apply_schema(&client).await.unwrap();
    let row = client
-      .query_one("SELECT COUNT(*)::int AS n FROM refinery_schema_history", &[
-      ])
+      .query_one(
+         "SELECT
+             (SELECT COUNT(*)::int
+              FROM information_schema.columns
+              WHERE table_schema = 'public'
+                AND table_name = 'api_key'
+                AND column_name IN ('scopes', 'kind', 'token_prefix', 'expires_at'))
+                AS api_key_columns,
+             to_regclass('public.api_idempotency') IS NOT NULL AS has_idempotency",
+         &[],
+      )
       .await
       .unwrap();
-   let n: i32 = row.get("n");
-   assert!(n >= 1, "at least one migration applied, got {n}");
+   let api_key_columns: i32 = row.get("api_key_columns");
+   let has_idempotency: bool = row.get("has_idempotency");
+   assert_eq!(api_key_columns, 4);
+   assert!(has_idempotency);
    db.teardown().await;
 }
 

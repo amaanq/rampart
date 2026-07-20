@@ -1,5 +1,5 @@
 //! rampart library crate. Entry points are `serve::serve`, `worker::run`,
-//! `migrate::run`, and the `admin::*` subcommands; the binary in
+//! and the `admin::*` subcommands. The binary in
 //! `src/main.rs` is a thin pound dispatcher.
 
 mod abuse;
@@ -19,7 +19,6 @@ pub mod config;
 pub mod db;
 pub mod flows;
 pub mod mailer;
-pub mod migrate;
 pub mod preview;
 pub mod serve;
 pub mod worker;

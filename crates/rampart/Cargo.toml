@@ -32,7 +32,6 @@ tower-http = { features = [ "trace", "fs", "set-header" ], version = "0.7.0" }
 
 deadpool-postgres = { features = [ "rt_tokio_1" ], version = "0.14.1" }
 rampart-codegen   = { path = "../rampart-codegen" }
-refinery          = { features = [ "tokio-postgres" ], version = "0.9.2" }
 tokio-postgres    = { features = [ "with-time-0_3", "with-serde_json-1" ], version = "0.7.18" }
 
 askama = "0.16.0"

@@ -128,9 +128,7 @@
                 ^pg_ctl -D $pgdata -l ($env.TMPDIR | path join server.log) -o $"-k ($socket) -c listen_addresses=" start
                 ^createdb -h $socket rampart_check
 
-                glob "${./migrations}/*.sql" | sort | each {|migration|
-                  ^psql -v ON_ERROR_STOP=1 -h $socket -d rampart_check -f $migration
-                } | ignore
+                ^psql -v ON_ERROR_STOP=1 -h $socket -d rampart_check -f ${./crates/rampart/schema.sql}
 
                 mkdir $work
                 cp -r ${./queries} ($work | path join queries)

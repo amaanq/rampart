@@ -16,9 +16,26 @@ use anyhow::{
    Result,
 };
 use deadpool_postgres::Pool;
-use rampart::migrate;
 use rand::RngExt as _;
-use tokio_postgres::NoTls;
+use tokio_postgres::{
+   Client,
+   NoTls,
+};
+
+const SCHEMA: &str = include_str!("../schema.sql");
+
+/// Apply the canonical schema to a throwaway test database.
+///
+/// # Errors
+///
+/// Returns an error when `PostgreSQL` rejects the schema.
+pub async fn apply_schema(client: &Client) -> Result<()> {
+   client
+      .batch_execute(SCHEMA)
+      .await
+      .context("apply test database schema")?;
+   Ok(())
+}
 
 #[expect(
    clippy::partial_pub_fields,
@@ -49,8 +66,8 @@ impl TestDb {
    /// # Errors
    ///
    /// Returns an error if `RAMPART_TEST_DB_URL` is unset, the admin or
-   /// per-test connection fails, `CREATE DATABASE` fails, or migrations
-   /// do not apply.
+   /// per-test connection fails, `CREATE DATABASE` fails, or the schema
+   /// does not apply.
    pub async fn try_new() -> Result<Self> {
       let admin_url = env::var("RAMPART_TEST_DB_URL").context("RAMPART_TEST_DB_URL not set")?;
       let name: String = format!(
@@ -63,32 +80,29 @@ impl TestDb {
          .collect::<String>()
       );
 
-      let (client, conn) = tokio_postgres::connect(&admin_url, NoTls)
+      let (admin_client, admin_connection) = tokio_postgres::connect(&admin_url, NoTls)
          .await
          .with_context(|| format!("connect admin URL {admin_url}"))?;
       tokio::spawn(async move {
-         let _ = conn.await;
+         let _ = admin_connection.await;
       });
-      client
+      admin_client
          .execute(&format!("CREATE DATABASE {name}"), &[])
          .await
          .with_context(|| format!("CREATE DATABASE {name}"))?;
 
       let url = rewrite_dbname(&admin_url, &name);
 
-      let mut m_client = {
-         let (mig_client, mig_conn) = tokio_postgres::connect(&url, NoTls)
+      let schema_client = {
+         let (schema_client, schema_connection) = tokio_postgres::connect(&url, NoTls)
             .await
             .with_context(|| format!("connect new DB {name}"))?;
          tokio::spawn(async move {
-            let _ = mig_conn.await;
+            let _ = schema_connection.await;
          });
-         mig_client
+         schema_client
       };
-      migrate::runner()
-         .run_async(&mut m_client)
-         .await
-         .context("apply migrations to test DB")?;
+      apply_schema(&schema_client).await?;
 
       let mut cfg = deadpool_postgres::Config::new();
       cfg.url = Some(url.clone());
@@ -109,7 +123,7 @@ impl TestDb {
 
    /// Open a `TestDb`, or `None` if the test should skip. With
    /// `RAMPART_REQUIRE_DB_TESTS=1` (predeploy gate) any setup failure —
-   /// missing env, unreachable DB, migration error — panics with the
+   /// missing env, unreachable DB, schema error — panics with the
    /// underlying error. Otherwise the test prints a WARN and skips.
    ///
    /// # Panics

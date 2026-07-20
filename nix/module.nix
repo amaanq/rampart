@@ -245,13 +245,9 @@ in
         }
         # Stalwart's Sieve hook authenticates to postgres as the
         # "stalwart-mail" role (matches the Unix user via peer auth).
-        # V001 grants EXECUTE on rampart_resolve_or_create /
-        # rampart_resolve_reply gated on this role existing — without
-        # ensureUsers ordering it before rampart-migrate, the role is
-        # absent at migration time, gated grants are skipped, and Sieve
-        # queries fail at mail time with `role "stalwart-mail" does not
-        # exist`. Only the role itself is provisioned here; stalwart's
-        # own DB / ownership lives in stalwart's nix module.
+        # The schema grants this role access to the resolver functions used
+        # by Stalwart's Sieve hook. Stalwart's own database and ownership
+        # remain in its Nix module.
         {
           name = "stalwart-mail";
         }
@@ -275,30 +271,10 @@ in
       "d ${cfg.backups.destination} 0700 ${cfg.user} ${cfg.group} - -"
     ];
 
-    systemd.services.rampart-migrate = {
-      description = "rampart — apply database migrations";
-      after = [ "postgresql.service" ];
-      requires = [ "postgresql.service" ];
-      serviceConfig = {
-        Type = "oneshot";
-        User = cfg.user;
-        Group = cfg.group;
-        ExecStart = "${cfg.package}/bin/rampart migrate";
-        RemainAfterExit = true;
-      };
-      environment = {
-        RAMPART_DATABASE_URL = cfg.database.url;
-        RUST_LOG = "info,rampart=debug";
-      };
-    };
-
     systemd.services.rampart = {
       description = "rampart — email alias manager";
-      after = [
-        "postgresql.service"
-        "rampart-migrate.service"
-      ];
-      requires = [ "rampart-migrate.service" ];
+      after = [ "postgresql.service" ];
+      requires = [ "postgresql.service" ];
       wantedBy = [ "multi-user.target" ];
       # LoadCredential reads the secret once at process start; restart
       # on rotation so the new password is picked up.
@@ -461,11 +437,8 @@ in
     # effect (or it's picked up at the next stalwart restart).
     systemd.services.rampart-render-sieve = {
       description = "rampart — regenerate Sieve from current alias_domain rows";
-      after = [
-        "postgresql.service"
-        "rampart-migrate.service"
-      ];
-      requires = [ "rampart-migrate.service" ];
+      after = [ "postgresql.service" ];
+      requires = [ "postgresql.service" ];
       before = [
         cfg.sieve.stalwartUnit
         "rampart-bootstrap-stalwart.service"
@@ -484,11 +457,8 @@ in
 
     systemd.services.rampart-gc = {
       description = "rampart — scheduled garbage collection";
-      after = [
-        "postgresql.service"
-        "rampart-migrate.service"
-      ];
-      requires = [ "rampart-migrate.service" ];
+      after = [ "postgresql.service" ];
+      requires = [ "postgresql.service" ];
       serviceConfig = {
         Type = "oneshot";
         User = cfg.user;
@@ -512,10 +482,7 @@ in
 
     systemd.services.rampart-backup = lib.mkIf cfg.backups.enable {
       description = "rampart — postgres pg_dump";
-      after = [
-        "postgresql.service"
-        "rampart-migrate.service"
-      ];
+      after = [ "postgresql.service" ];
       requires = [ "postgresql.service" ];
       serviceConfig = {
         Type = "oneshot";
@@ -528,7 +495,7 @@ in
           tmp="$out.tmp"
           # Atomic: build to $tmp, mv only on full success.
           trap 'rm -f "$tmp"' EXIT
-          ${pkgs.postgresql_16}/bin/pg_dump --format=plain --clean --if-exists \
+          ${config.services.postgresql.package}/bin/pg_dump --format=plain --clean --if-exists \
             "${cfg.database.url}" \
             | ${pkgs.gzip}/bin/gzip -9 > "$tmp"
           mv "$tmp" "$out"

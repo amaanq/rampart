@@ -1,13 +1,4 @@
--- rampart V001 — initial schema (multi-user + phase-2 ready).
---
--- All tables created up front. Rust code fills them in three chunks:
---   1. Multi-user foundation uses: user, session, api_key, invite_token,
---      and the user_id / owner_id / shared columns on existing tables.
---   2. Self-service + passkeys uses: webauthn_credential, webauthn_ceremony,
---      password_reset_token, email_change_token, mailbox_verify_token,
---      rate_limit_bucket.
---   3. Reply-via-alias uses: reverse_contact.
--- No migration chain yet because nothing is deployed.
+-- Canonical Rampart schema for fresh databases and local checks.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS citext;
@@ -58,11 +49,20 @@ CREATE TABLE IF NOT EXISTS api_key (
     user_id         BIGINT NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
     name            TEXT NOT NULL,
     key_hash        BYTEA NOT NULL UNIQUE,      -- sha256 of the token
+    scopes          TEXT[] NOT NULL DEFAULT ARRAY['*']::TEXT[],
+    kind            TEXT NOT NULL DEFAULT 'legacy',
+    token_prefix    TEXT,
     last_used_at    TIMESTAMPTZ,
     revoked_at      TIMESTAMPTZ,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    expires_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT api_key_scopes_nonempty CHECK (cardinality(scopes) > 0),
+    CONSTRAINT api_key_kind_valid CHECK (kind IN ('legacy', 'extension'))
 );
 CREATE INDEX IF NOT EXISTS ix_api_key_user ON api_key(user_id);
+CREATE INDEX IF NOT EXISTS ix_api_key_active_expiry
+    ON api_key(expires_at)
+    WHERE revoked_at IS NULL AND expires_at IS NOT NULL;
 
 --------------------------------------------------------------------------------
 -- invite_token
@@ -197,6 +197,18 @@ CREATE INDEX IF NOT EXISTS ix_alias_domain_id    ON alias (domain_id);
 CREATE INDEX IF NOT EXISTS ix_alias_mailbox_id   ON alias (mailbox_id);
 CREATE INDEX IF NOT EXISTS ix_alias_enabled      ON alias (enabled) WHERE enabled = TRUE;
 CREATE INDEX IF NOT EXISTS ix_alias_last_email   ON alias (last_email_at DESC NULLS LAST);
+
+--------------------------------------------------------------------------------
+-- api_idempotency
+--------------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS api_idempotency (
+    api_key_id       BIGINT NOT NULL REFERENCES api_key(id) ON DELETE CASCADE,
+    idempotency_key  TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+    alias_id         BIGINT REFERENCES alias(id) ON DELETE CASCADE,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (api_key_id, idempotency_key)
+);
 
 -- Full respecification of alias_validate:
 --   1. alias.domain_id exists
@@ -599,7 +611,7 @@ $$;
 -- function fails to resolve and the Sieve 5xx's every legitimate
 -- forward. This text overload re-dispatches to the citext implementation.
 -- Both are SECURITY DEFINER so the stalwart-mail role (which has no
--- direct table privileges) can run them with the migration owner's
+-- direct table privileges) can run them with the schema owner's
 -- access to alias / mailbox / "user" / alias_domain.
 CREATE OR REPLACE FUNCTION rampart_resolve_or_create(addr text) RETURNS bigint
 LANGUAGE sql SECURITY DEFINER
@@ -629,14 +641,14 @@ $$;
 
 -- Postgres grants EXECUTE to PUBLIC by default. Combined with
 -- SECURITY DEFINER, that lets any cluster role run our resolvers with
--- the migration owner's privileges. REVOKE PUBLIC unconditionally and
+-- the schema owner's privileges. REVOKE PUBLIC unconditionally and
 -- grant only to stalwart-mail.
 REVOKE ALL ON FUNCTION rampart_resolve_or_create(citext) FROM PUBLIC;
 REVOKE ALL ON FUNCTION rampart_resolve_or_create(text)   FROM PUBLIC;
 REVOKE ALL ON FUNCTION rampart_resolve_reply(text)       FROM PUBLIC;
 
 -- Grants for the stalwart-mail postgres role used by the Sieve hook.
--- Gated so a host without that role can still apply the migration.
+-- Gated so a host without that role can still apply the schema.
 DO $grant$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'stalwart-mail') THEN

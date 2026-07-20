@@ -6,9 +6,10 @@
 /// Default per-user alias cap when `user.max_aliases` is NULL.
 ///
 /// Duplicated as the literal `200` in `rampart_resolve_or_create`'s plpgsql
-/// body in V001 (the catch-all path enforces the same cap from the Sieve
-/// side, where this Rust constant isn't reachable). Keep the two in sync —
-/// search V001 for `COALESCE(max_aliases::bigint, 200)`.
+/// body in `crates/rampart/schema.sql` (the catch-all path enforces the same
+/// cap from the Sieve side, where this Rust constant isn't reachable). Keep the
+/// two in sync by searching the schema for `COALESCE(max_aliases::bigint,
+/// 200)`.
 pub const DEFAULT_MAX_ALIASES: i64 = 200;
 /// Default per-user alias-domain cap when `user.max_domains` is NULL.
 pub const DEFAULT_MAX_DOMAINS: i64 = 67;

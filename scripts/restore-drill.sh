@@ -22,12 +22,6 @@ if [[ -z "${PGHOST:-}" && -d /run/postgresql ]]; then
 fi
 HOST="${PGHOST:-localhost}"
 
-# Migration version expected to be the latest in the dump. If/when V002
-# lands, bump these. Mismatch == real failure (the dump came from an
-# older rampart, or someone tampered with refinery_schema_history).
-EXPECTED_VERSION=1
-EXPECTED_NAME="init"
-
 if [[ ! -f "$DUMP" ]]; then
     echo "restore drill: dump not found: $DUMP" >&2
     exit 2
@@ -38,20 +32,23 @@ trap "dropdb -h '$HOST' '$DBNAME' 2>/dev/null || true" EXIT
 
 zcat "$DUMP" | psql -h "$HOST" -d "$DBNAME" -v ON_ERROR_STOP=1 -q
 
-# Migration check. psql variable substitution does NOT happen inside
-# dollar-quoted PL/pgSQL bodies (the `$$ ... $$` block), so we have to
-# do the comparison in bash. -At = unaligned, tuples-only, perfect for
-# scripted parsing.
-actual=$(psql -h "$HOST" -d "$DBNAME" -At -v ON_ERROR_STOP=1 -c \
-    "SELECT version || '|' || name FROM refinery_schema_history \
-     ORDER BY version DESC LIMIT 1")
-if [[ -z "$actual" ]]; then
-    echo "restore drill: no migrations in dump" >&2
-    exit 1
-fi
-expected="${EXPECTED_VERSION}|${EXPECTED_NAME}"
-if [[ "$actual" != "$expected" ]]; then
-    echo "restore drill: expected migration '$expected', got '$actual'" >&2
+# Confirm the dump contains the canonical schema objects and extension API
+# columns. This catches partial or stale backups without relying on a version
+# table.
+schema_ok=$(psql -h "$HOST" -d "$DBNAME" -At -v ON_ERROR_STOP=1 -c \
+    "SELECT
+         to_regclass('public.alias') IS NOT NULL
+         AND to_regclass('public.api_idempotency') IS NOT NULL
+         AND to_regprocedure('public.rampart_resolve_or_create(text)') IS NOT NULL
+         AND (
+             SELECT COUNT(*) = 4
+             FROM information_schema.columns
+             WHERE table_schema = 'public'
+               AND table_name = 'api_key'
+               AND column_name IN ('scopes', 'kind', 'token_prefix', 'expires_at')
+         )")
+if [[ "$schema_ok" != "t" ]]; then
+    echo "restore drill: required schema objects are missing" >&2
     exit 1
 fi
 

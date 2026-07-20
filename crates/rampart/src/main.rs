@@ -17,7 +17,6 @@ use rampart::{
    admin,
    bootstrap,
    config,
-   migrate,
    preview,
    serve,
    worker,
@@ -45,9 +44,6 @@ enum Cmd {
 
    /// Run the LMTP resubmit worker.
    Worker,
-
-   /// Apply pending database migrations, then exit.
-   Migrate,
 
    /// Operator commands.
    Admin {
@@ -203,10 +199,6 @@ async fn run(cli: Cli) -> Result<()> {
       Cmd::Worker => {
          let cfg = config::Config::from_env()?;
          worker::run(cfg).await
-      },
-      Cmd::Migrate => {
-         let url = database_url()?;
-         migrate::run(&url).await
       },
       Cmd::Admin { cmd } => match cmd {
          // Bootstrap takes DB params from CLI args, not env.

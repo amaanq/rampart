@@ -32,8 +32,6 @@
 !crates/**
 
 # Schema + queries
-!migrations/
-!migrations/**
 !queries/
 !queries/**
 
