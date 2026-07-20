@@ -7,7 +7,7 @@
 # This is the deploy-day proof that local backups can actually be
 # restored. Run it after every backup pipeline change, and on a
 # representative dump at least monthly. A backup that has never been
-# restored is theoretical — see docs/stalwart-integration.md.
+# restored is theoretical — see the README.
 
 set -euo pipefail
 

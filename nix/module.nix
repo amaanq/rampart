@@ -119,7 +119,7 @@ in
         default = true;
         description = ''
           Local pg_dump only — pair with off-host pickup
-          (borg/restic/scp) to be DR-grade. See docs/stalwart-integration.md.
+          (borg/restic/scp) to be DR-grade. See the README.
         '';
       };
       destination = mkOption {
@@ -550,9 +550,9 @@ in
 
     # Stalwart-side config (Domain objects, rampart_rcpt Sieve script,
     # session.rcpt.script, SQL store, DKIM rules) is the operator's
-    # responsibility — see docs/stalwart-integration.md. Stalwart 0.16
-    # dropped the TOML `settings` tree, so this module can no longer
-    # write into it.
+    # responsibility — see the README's Stalwart integration section.
+    # Stalwart 0.16 dropped the TOML `settings` tree, so this module can
+    # no longer write into it.
 
     services.nginx.virtualHosts = mkIf cfg.nginx.enable {
       ${cfg.nginx.hostName} = {
