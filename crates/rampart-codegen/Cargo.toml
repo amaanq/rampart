@@ -1,53 +1,53 @@
 # This file was generated with `cornucopia`. Do not modify.
 
 [package]
-name = "rampart-codegen"
-version = "0.0.0"
-edition = "2024"
+name         = "rampart-codegen"
+version      = "0.0.0"
+edition      = "2024"
 rust-version = "1.85"
-publish = false
+publish      = false
 
 [dependencies.chrono]
-version = "0.4.44"
-features = ["serde"]
+features = [ "serde" ]
+version  = "0.4.44"
 
 [dependencies.deadpool-postgres]
-version = "0.14.1"
 optional = true
+version  = "0.14.1"
 
 [dependencies.futures]
 version = "0.3.32"
 
 [dependencies.postgres]
-version = "0.19"
-features = ["with-time-0_3", "with-serde_json-1"]
+features = [ "with-time-0_3", "with-serde_json-1" ]
 optional = true
+version  = "0.19"
 
 [dependencies.postgres-protocol]
 version = "0.6.11"
 
 [dependencies.postgres-types]
-version = "0.2.13"
-features = ["derive"]
+features = [ "derive" ]
+version  = "0.2.13"
 
 [dependencies.serde]
-version = "1"
-features = ["derive"]
+features = [ "derive" ]
+version  = "1"
 
 [dependencies.serde_json]
-version = "1.0.149"
-features = ["raw_value"]
+features = [ "raw_value" ]
+version  = "1.0.149"
 
 [dependencies.time]
-version = "0.3"
-features = ["serde", "serde-well-known"]
+features = [ "serde", "serde-well-known" ]
+version  = "0.3"
 
 [dependencies.tokio-postgres]
-version = "0.7"
-features = ["with-time-0_3", "with-serde_json-1"]
 default-features = false
+features         = [ "with-time-0_3", "with-serde_json-1" ]
+version          = "0.7"
 
 [features]
-deadpool = ["dep:deadpool-postgres", "tokio-postgres/default"]
-default = ["deadpool"]
-wasm-async = ["tokio-postgres/js", "chrono/wasmbind"]
+deadpool   = [ "dep:deadpool-postgres", "tokio-postgres/default" ]
+default    = [ "deadpool" ]
+wasm-async = [ "tokio-postgres/js", "chrono/wasmbind" ]

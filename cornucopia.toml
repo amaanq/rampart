@@ -1,6 +1,6 @@
 # Cornucopia generates a separate Rust crate at `crates/rampart-codegen` from the
 # .sql files in `queries/`. Run `cornucopia live "$RAMPART_TEST_DB_URL"` to
-# regenerate after schema or query changes; the resulting crate is
+# regenerate after schema or query changes. The resulting crate is
 # committed and consumed by the main Rampart crate.
 
 destination = "crates/rampart-codegen"
@@ -31,22 +31,16 @@ publish = false
 [manifest.dependencies]
 serde = { features = [ "derive" ], version = "1" }
 time  = { features = [ "serde", "serde-well-known" ], version = "0.3" }
+
 # Override Cornucopia's chrono default. Our type mapper sends TIMESTAMPTZ
 # to time::OffsetDateTime, so the postgres clients need the matching
 # with-time-0_3 feature to know how to bind that type.
-postgres = {
-  features = [
-    "with-time-0_3",
-    "with-serde_json-1",
-  ],
-  optional = true,
-  version = "0.19",
-}
-tokio-postgres = {
-  default-features = false,
-  features = [
-    "with-time-0_3",
-    "with-serde_json-1",
-  ],
-  version = "0.7",
-}
+[manifest.dependencies.postgres]
+features = [ "with-time-0_3", "with-serde_json-1" ]
+optional = true
+version  = "0.19"
+
+[manifest.dependencies.tokio-postgres]
+default-features = false
+features         = [ "with-time-0_3", "with-serde_json-1" ]
+version          = "0.7"
