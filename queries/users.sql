@@ -102,6 +102,9 @@ UPDATE "user" SET enabled = TRUE WHERE id = :user_id;
 --! disable
 UPDATE "user" SET enabled = FALSE WHERE id = :user_id;
 
+--! set_admin
+UPDATE "user" SET is_admin = :is_admin WHERE id = :user_id;
+
 --! list_cli : (display_name?)
 SELECT id, email::text AS email, is_admin, enabled, display_name
 FROM "user"

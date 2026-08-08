@@ -370,6 +370,7 @@ section { margin-bottom: 2em; }
 .admin-pending-invites table { margin-top: .5rem; }
 .admin-pending-invites td:last-child,
 .admin-pending-invites th:last-child { width: 1%; text-align: right; }
+.admin-user-actions { display: flex; gap: .4rem; }
 
 form { display: flex; flex-wrap: wrap; gap: .75em; align-items: end; }
 main.auth form { flex-direction: column; align-items: stretch; text-align: left; }

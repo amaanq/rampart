@@ -64,10 +64,10 @@
         </thead>
         <tbody>
         {%- for u in users %}
-            <tr class="{% if !u.enabled %}disabled{% endif %}">
+            <tr class="{% if u.is_admin %}is-admin{% endif %} {% if !u.enabled %}disabled{% endif %}">
                 <td>{{ u.id }}</td>
                 <td>{{ u.email }}</td>
-                <td>{% if u.is_admin %}admin{% else %}user{% endif %}</td>
+                <td class="admin-user-role">{% if u.is_admin %}admin{% else %}user{% endif %}</td>
                 <td class="status-cell">
                     {% if u.enabled %}
                     <span class="status-dot is-enabled" role="img" aria-label="Enabled" title="Enabled"></span>
@@ -80,29 +80,54 @@
                 <td><time class="timestamp" datetime="{{ u.created_at|datetime_attribute }}">{{ u.created_at|ui_datetime }}</time></td>
                 <td>
                     {% if u.id == current_user_id %}
-                    <span class="admin-current-user" title="You cannot disable your own account">current</span>
+                    <span class="admin-current-user" title="You cannot disable or demote your own account">current</span>
                     {% else %}
-                    <button class="admin-user-toggle {% if u.enabled %}danger{% else %}secondary{% endif %}"
-                            hx-patch="/api/v1/admin/users/{{ u.id }}"
-                            hx-ext="json-enc"
-                            hx-vals='{"enabled": {% if u.enabled %}false{% else %}true{% endif %}}'
-                            hx-disabled-elt="this"
-                            data-reload="no"
-                            data-boolean-toggle="enabled"
-                            data-label-true="disable"
-                            data-label-false="enable"
-                            data-status-target=".status-dot"
-                            data-toggle-closest="tr"
-                            data-toggle-class="disabled"
-                            data-label-with-class="enable"
-                            data-label-without-class="disable"
-                            data-class-with-class="secondary"
-                            data-class-without-class="danger"
-                            data-confirm-with-class=""
-                            data-confirm-without-class="disable {{ u.email }}? (sessions + api keys revoked, aliases disabled)"
-                            {% if u.enabled %}hx-confirm="disable {{ u.email }}? (sessions + api keys revoked, aliases disabled)"{% endif %}>
-                        {% if u.enabled %}disable{% else %}enable{% endif %}
-                    </button>
+                    <div class="admin-user-actions">
+                        <button class="admin-user-toggle {% if u.is_admin %}danger{% else %}secondary{% endif %}"
+                                hx-patch="/api/v1/admin/users/{{ u.id }}/admin"
+                                hx-ext="json-enc"
+                                hx-vals='{"is_admin": {% if u.is_admin %}false{% else %}true{% endif %}}'
+                                hx-disabled-elt="this"
+                                data-reload="no"
+                                data-boolean-toggle="is_admin"
+                                data-label-true="demote"
+                                data-label-false="promote"
+                                data-text-target=".admin-user-role"
+                                data-text-true="admin"
+                                data-text-false="user"
+                                data-toggle-closest="tr"
+                                data-toggle-class="is-admin"
+                                data-label-with-class="demote"
+                                data-label-without-class="promote"
+                                data-class-with-class="danger"
+                                data-class-without-class="secondary"
+                                data-confirm-with-class="demote {{ u.email }} from admin?"
+                                data-confirm-without-class="promote {{ u.email }} to admin?"
+                                hx-confirm="{% if u.is_admin %}demote {{ u.email }} from admin?{% else %}promote {{ u.email }} to admin?{% endif %}">
+                            {% if u.is_admin %}demote{% else %}promote{% endif %}
+                        </button>
+                        <button class="admin-user-toggle {% if u.enabled %}danger{% else %}secondary{% endif %}"
+                                hx-patch="/api/v1/admin/users/{{ u.id }}"
+                                hx-ext="json-enc"
+                                hx-vals='{"enabled": {% if u.enabled %}false{% else %}true{% endif %}}'
+                                hx-disabled-elt="this"
+                                data-reload="no"
+                                data-boolean-toggle="enabled"
+                                data-label-true="disable"
+                                data-label-false="enable"
+                                data-status-target=".status-dot"
+                                data-toggle-closest="tr"
+                                data-toggle-class="disabled"
+                                data-label-with-class="enable"
+                                data-label-without-class="disable"
+                                data-class-with-class="secondary"
+                                data-class-without-class="danger"
+                                data-confirm-with-class=""
+                                data-confirm-without-class="disable {{ u.email }}? (sessions + api keys revoked, aliases disabled)"
+                                {% if u.enabled %}hx-confirm="disable {{ u.email }}? (sessions + api keys revoked, aliases disabled)"{% endif %}>
+                            {% if u.enabled %}disable{% else %}enable{% endif %}
+                        </button>
+                    </div>
                     {% endif %}
                 </td>
             </tr>

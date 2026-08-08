@@ -42,6 +42,10 @@ pub fn router() -> Router<AppState> {
       )
       .route("/api/v1/admin/users/{id}", patch(admin::admin_user_patch))
       .route(
+         "/api/v1/admin/users/{id}/admin",
+         patch(admin::admin_user_role_patch),
+      )
+      .route(
          "/api/v1/admin/users/{id}/enable",
          put(admin::admin_user_enable),
       )

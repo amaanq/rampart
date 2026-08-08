@@ -199,6 +199,36 @@ pub(super) async fn admin_user_patch(
    set_admin_user_enabled(&state, Some(principal.user_id), id, body.enabled).await
 }
 
+#[derive(Deserialize)]
+pub(super) struct AdminUserRolePatch {
+   is_admin: bool,
+}
+
+pub(super) async fn admin_user_role_patch(
+   State(state): State<AppState>,
+   AdminPrincipal(principal): AdminPrincipal,
+   Path(id): Path<i64>,
+   Json(body): Json<AdminUserRolePatch>,
+) -> ApiResult<StatusCode> {
+   reject_self_demotion(principal.user_id, id, body.is_admin)?;
+   let conn = state.pool.get().await?;
+   let updated = users::set_admin().bind(&conn, &body.is_admin, &id).await?;
+   if updated == 0 {
+      Err(ApiError::NotFound)
+   } else {
+      Ok(StatusCode::NO_CONTENT)
+   }
+}
+
+fn reject_self_demotion(actor_id: i64, target_id: i64, is_admin: bool) -> ApiResult<()> {
+   if actor_id == target_id && !is_admin {
+      return Err(ApiError::BadRequest(
+         "you cannot demote your own account".into(),
+      ));
+   }
+   Ok(())
+}
+
 fn reject_self_disable(actor_id: Option<i64>, target_id: i64) -> ApiResult<()> {
    if actor_id == Some(target_id) {
       return Err(ApiError::BadRequest(
@@ -319,5 +349,19 @@ mod tests {
    #[test]
    fn another_user_can_be_disabled() {
       reject_self_disable(Some(7), 8).unwrap();
+   }
+
+   #[test]
+   fn self_demotion_is_rejected() {
+      assert!(matches!(
+         reject_self_demotion(7, 7, false),
+         Err(ApiError::BadRequest(message)) if message == "you cannot demote your own account"
+      ));
+   }
+
+   #[test]
+   fn another_user_role_can_change() {
+      reject_self_demotion(7, 8, false).unwrap();
+      reject_self_demotion(7, 8, true).unwrap();
    }
 }

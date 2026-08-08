@@ -36,6 +36,11 @@ pub struct SetEmailParams<T1: crate::StringSql> {
     pub user_id: i64,
 }
 #[derive(Clone, Copy, Debug)]
+pub struct SetAdminParams {
+    pub is_admin: bool,
+    pub user_id: i64,
+}
+#[derive(Clone, Copy, Debug)]
 pub struct CapAndCountAliasesParams {
     pub default_cap: i64,
     pub user_id: i64,
@@ -1928,6 +1933,49 @@ impl DisableStmt {
         user_id: &'a i64,
     ) -> Result<u64, tokio_postgres::Error> {
         client.execute(self.0, &[user_id]).await
+    }
+}
+pub struct SetAdminStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn set_admin() -> SetAdminStmt {
+    SetAdminStmt("UPDATE \"user\" SET is_admin = $1 WHERE id = $2", None)
+}
+impl SetAdminStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+        is_admin: &'a bool,
+        user_id: &'a i64,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[is_admin, user_id]).await
+    }
+}
+impl<'a, C: GenericClient + Send + Sync>
+    crate::client::async_::Params<
+        'a,
+        'a,
+        'a,
+        SetAdminParams,
+        std::pin::Pin<
+            Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+        >,
+        C,
+    > for SetAdminStmt
+{
+    fn params(
+        &'a self,
+        client: &'a C,
+        params: &'a SetAdminParams,
+    ) -> std::pin::Pin<
+        Box<dyn futures::Future<Output = Result<u64, tokio_postgres::Error>> + Send + 'a>,
+    > {
+        Box::pin(self.bind(client, &params.is_admin, &params.user_id))
     }
 }
 pub struct ListCliStmt(&'static str, Option<tokio_postgres::Statement>);

@@ -1173,6 +1173,7 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
       )
       .route("/api/v1/admin/domains/{id}/shared", routing::put(updated))
       .route("/api/v1/admin/users/{id}", routing::patch(updated))
+      .route("/api/v1/admin/users/{id}/admin", routing::patch(updated))
       .route("/api/v1/admin/invites", routing::post(invite_created))
       .route("/api/v1/admin/invites/{id}", routing::delete(deleted))
       .route(
