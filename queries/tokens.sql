@@ -1,8 +1,21 @@
 -- One-shot token tables.
 
---! invite_create (preset_email?)
-INSERT INTO invite_token (token_hash, preset_email, expires_at)
-VALUES (:token_hash, :preset_email, :expires_at);
+--! invite_create (created_by?, preset_email?)
+INSERT INTO invite_token (token_hash, created_by, preset_email, expires_at)
+VALUES (:token_hash, :created_by, :preset_email, :expires_at);
+
+--! invite_list_pending : (preset_email?)
+SELECT encode(token_hash, 'hex') AS id,
+       preset_email::text AS preset_email,
+       expires_at
+FROM invite_token
+WHERE used_at IS NULL AND expires_at > now()
+ORDER BY expires_at ASC;
+
+--! invite_revoke
+DELETE FROM invite_token
+WHERE token_hash = :token_hash
+  AND used_at IS NULL;
 
 --! invite_claim
 UPDATE invite_token SET used_at = now()

@@ -60,6 +60,35 @@ async fn seed_mailbox(client: &deadpool_postgres::Client, user_id: i64, email: &
       .get("id")
 }
 
+#[tokio::test]
+async fn invite_creation_stores_creator_email_and_hash() {
+   let db = test_db!();
+   let client = db.pool.get().await.unwrap();
+   let creator = seed_user(&client, "admin@test").await;
+   let invite = flows::create_invite(&client, Some(creator), Some("friend@test"))
+      .await
+      .unwrap();
+
+   assert_eq!(invite.id, hex::encode(Hash::hash(invite.token.as_bytes())));
+   let row = client
+      .query_one(
+         "SELECT created_by, preset_email::text AS preset_email, used_at FROM invite_token WHERE \
+          token_hash = decode($1, 'hex')",
+         &[&invite.id],
+      )
+      .await
+      .unwrap();
+   assert_eq!(row.get::<_, Option<i64>>("created_by"), Some(creator));
+   assert_eq!(
+      row.get::<_, Option<String>>("preset_email").as_deref(),
+      Some("friend@test")
+   );
+   assert!(row.get::<_, Option<OffsetDateTime>>("used_at").is_none());
+
+   drop(client);
+   db.teardown().await;
+}
+
 /// Pull the URL-safe base64 token out of an email body. The flows write
 /// links of the form `<origin>/<path>/<token>`; we just regex out the
 /// last path segment of the first URL.

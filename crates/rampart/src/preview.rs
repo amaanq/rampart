@@ -31,6 +31,7 @@ use rampart_codegen::queries::{
    domains as dq,
    email_log as elq,
    mailboxes as mbq,
+   tokens as tq,
    users as uq,
    webauthn as wq,
 };
@@ -341,6 +342,14 @@ fn mock_admin_users() -> Vec<uq::ListAdminCompact> {
          nb_domains: 0,
       },
    ]
+}
+
+fn mock_pending_invites() -> Vec<tq::InviteListPending> {
+   vec![tq::InviteListPending {
+      id:           "2cc9d41557fd90ce628df613658d003370b3573a95aa394f604e5ec55dbb3f34".into(),
+      preset_email: Some("newfriend@example.com".into()),
+      expires_at:   OffsetDateTime::now_utc() + Duration::days(5),
+   }]
 }
 
 fn mock_admin_domains() -> Vec<dq::ListAdmin> {
@@ -1005,12 +1014,14 @@ async fn admin_users_page() -> Response {
       is_admin:        bool,
       current_user_id: i64,
       users:           Vec<uq::ListAdminCompact>,
+      invites:         Vec<tq::InviteListPending>,
    }
    render(&Page {
       user_email:      user_email(),
       is_admin:        true,
       current_user_id: 1,
       users:           mock_admin_users(),
+      invites:         mock_pending_invites(),
    })
 }
 
@@ -1075,6 +1086,25 @@ async fn deleted() -> StatusCode {
 
 async fn updated() -> StatusCode {
    StatusCode::NO_CONTENT
+}
+
+#[derive(Deserialize)]
+struct PreviewInviteCreate {
+   email: Option<String>,
+}
+
+async fn invite_created(Json(body): Json<PreviewInviteCreate>) -> Response {
+   (
+      StatusCode::CREATED,
+      Json(serde_json::json!({
+         "id": "5c1fdcc1969b93b7a003547b1e0c3f5b7271dc50c40804dfd160478286d6ac4f",
+         "email": body.email,
+         "expires_at": "2026-08-14T12:00:00Z",
+         "url": "http://localhost:3000/signup/preview-invitation-token",
+         "delivered": true,
+      })),
+   )
+      .into_response()
 }
 
 async fn unauthorized() -> (StatusCode, &'static str) {
@@ -1143,6 +1173,8 @@ pub async fn serve(listen: SocketAddr, static_dir: String) -> anyhow::Result<()>
       )
       .route("/api/v1/admin/domains/{id}/shared", routing::put(updated))
       .route("/api/v1/admin/users/{id}", routing::patch(updated))
+      .route("/api/v1/admin/invites", routing::post(invite_created))
+      .route("/api/v1/admin/invites/{id}", routing::delete(deleted))
       .route(
          "/api/v1/admin/users/{id}/enable",
          routing::put(unauthorized),

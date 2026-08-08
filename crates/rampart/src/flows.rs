@@ -40,6 +40,14 @@ use crate::{
 };
 
 pub const DEFAULT_TOKEN_TTL_HOURS: i64 = 1;
+pub const INVITE_TTL_DAYS: i64 = 7;
+
+#[derive(Debug)]
+pub struct CreatedInvite {
+   pub id:         String,
+   pub token:      String,
+   pub expires_at: OffsetDateTime,
+}
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -124,6 +132,31 @@ fn generate_token() -> (String, Vec<u8>) {
 
 fn hash_token(token: &str) -> Vec<u8> {
    Hash::hash(token.as_bytes()).to_vec()
+}
+
+/// Create a one time signup invitation.
+///
+/// # Errors
+///
+/// Returns an error when the invitation cannot be stored.
+pub async fn create_invite(
+   client: &tokio_postgres::Client,
+   created_by: Option<i64>,
+   preset_email: Option<&str>,
+) -> Result<CreatedInvite> {
+   let (token, token_hash) = generate_token();
+   let id = hex::encode(&token_hash);
+   let expires_at = OffsetDateTime::now_utc() + Duration::days(INVITE_TTL_DAYS);
+   let preset_email = preset_email.map(str::to_owned);
+   tokens::invite_create()
+      .bind(client, &token_hash, &created_by, &preset_email, &expires_at)
+      .await
+      .context("storing invite")?;
+   Ok(CreatedInvite {
+      id,
+      token,
+      expires_at,
+   })
 }
 
 /// Advisory-lock key serializing concurrent /setup POSTs.

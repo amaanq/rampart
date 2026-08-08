@@ -3,6 +3,7 @@
 #[derive(Debug)]
 pub struct InviteCreateParams<T1: crate::BytesSql, T2: crate::StringSql> {
     pub token_hash: T1,
+    pub created_by: Option<i64>,
     pub preset_email: Option<T2>,
     pub expires_at: time::OffsetDateTime,
 }
@@ -39,6 +40,33 @@ pub struct MailboxVerifyCreateParams<T1: crate::BytesSql> {
     pub token_hash: T1,
     pub mailbox_id: i64,
     pub expires_at: time::OffsetDateTime,
+}
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct InviteListPending {
+    pub id: String,
+    pub preset_email: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub expires_at: time::OffsetDateTime,
+}
+pub struct InviteListPendingBorrowed<'a> {
+    pub id: &'a str,
+    pub preset_email: Option<&'a str>,
+    pub expires_at: time::OffsetDateTime,
+}
+impl<'a> From<InviteListPendingBorrowed<'a>> for InviteListPending {
+    fn from(
+        InviteListPendingBorrowed {
+            id,
+            preset_email,
+            expires_at,
+        }: InviteListPendingBorrowed<'a>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            preset_email: preset_email.map(|v| v.into()),
+            expires_at,
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Copy, serde::Serialize)]
 pub struct InviteFailure {
@@ -80,6 +108,73 @@ pub struct MailboxVerifyFailure {
 }
 use crate::client::async_::GenericClient;
 use futures::{self, StreamExt, TryStreamExt};
+pub struct InviteListPendingQuery<'c, 'a, 's, C: GenericClient, T, const N: usize> {
+    client: &'c C,
+    params: [&'a (dyn postgres_types::ToSql + Sync); N],
+    query: &'static str,
+    cached: Option<&'s tokio_postgres::Statement>,
+    extractor: fn(&tokio_postgres::Row) -> Result<InviteListPendingBorrowed, tokio_postgres::Error>,
+    mapper: fn(InviteListPendingBorrowed) -> T,
+}
+impl<'c, 'a, 's, C, T: 'c, const N: usize> InviteListPendingQuery<'c, 'a, 's, C, T, N>
+where
+    C: GenericClient,
+{
+    pub fn map<R>(
+        self,
+        mapper: fn(InviteListPendingBorrowed) -> R,
+    ) -> InviteListPendingQuery<'c, 'a, 's, C, R, N> {
+        InviteListPendingQuery {
+            client: self.client,
+            params: self.params,
+            query: self.query,
+            cached: self.cached,
+            extractor: self.extractor,
+            mapper,
+        }
+    }
+    pub async fn one(self) -> Result<T, tokio_postgres::Error> {
+        let row =
+            crate::client::async_::one(self.client, self.query, &self.params, self.cached).await?;
+        Ok((self.mapper)((self.extractor)(&row)?))
+    }
+    pub async fn all(self) -> Result<Vec<T>, tokio_postgres::Error> {
+        self.iter().await?.try_collect().await
+    }
+    pub async fn opt(self) -> Result<Option<T>, tokio_postgres::Error> {
+        let opt_row =
+            crate::client::async_::opt(self.client, self.query, &self.params, self.cached).await?;
+        Ok(opt_row
+            .map(|row| {
+                let extracted = (self.extractor)(&row)?;
+                Ok((self.mapper)(extracted))
+            })
+            .transpose()?)
+    }
+    pub async fn iter(
+        self,
+    ) -> Result<
+        impl futures::Stream<Item = Result<T, tokio_postgres::Error>> + 'c,
+        tokio_postgres::Error,
+    > {
+        let stream = crate::client::async_::raw(
+            self.client,
+            self.query,
+            crate::slice_iter(&self.params),
+            self.cached,
+        )
+        .await?;
+        let mapped = stream
+            .map(move |res| {
+                res.and_then(|row| {
+                    let extracted = (self.extractor)(&row)?;
+                    Ok((self.mapper)(extracted))
+                })
+            })
+            .into_stream();
+        Ok(mapped)
+    }
+}
 pub struct Vecu8Query<'c, 'a, 's, C: GenericClient, T, const N: usize> {
     client: &'c C,
     params: [&'a (dyn postgres_types::ToSql + Sync); N],
@@ -543,7 +638,7 @@ where
 pub struct InviteCreateStmt(&'static str, Option<tokio_postgres::Statement>);
 pub fn invite_create() -> InviteCreateStmt {
     InviteCreateStmt(
-        "INSERT INTO invite_token (token_hash, preset_email, expires_at) VALUES ($1, $2, $3)",
+        "INSERT INTO invite_token (token_hash, created_by, preset_email, expires_at) VALUES ($1, $2, $3, $4)",
         None,
     )
 }
@@ -559,11 +654,12 @@ impl InviteCreateStmt {
         &'s self,
         client: &'c C,
         token_hash: &'a T1,
+        created_by: &'a Option<i64>,
         preset_email: &'a Option<T2>,
         expires_at: &'a time::OffsetDateTime,
     ) -> Result<u64, tokio_postgres::Error> {
         client
-            .execute(self.0, &[token_hash, preset_email, expires_at])
+            .execute(self.0, &[token_hash, created_by, preset_email, expires_at])
             .await
     }
 }
@@ -589,9 +685,70 @@ impl<'a, C: GenericClient + Send + Sync, T1: crate::BytesSql, T2: crate::StringS
         Box::pin(self.bind(
             client,
             &params.token_hash,
+            &params.created_by,
             &params.preset_email,
             &params.expires_at,
         ))
+    }
+}
+pub struct InviteListPendingStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn invite_list_pending() -> InviteListPendingStmt {
+    InviteListPendingStmt(
+        "SELECT encode(token_hash, 'hex') AS id, preset_email::text AS preset_email, expires_at FROM invite_token WHERE used_at IS NULL AND expires_at > now() ORDER BY expires_at ASC",
+        None,
+    )
+}
+impl InviteListPendingStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub fn bind<'c, 'a, 's, C: GenericClient>(
+        &'s self,
+        client: &'c C,
+    ) -> InviteListPendingQuery<'c, 'a, 's, C, InviteListPending, 0> {
+        InviteListPendingQuery {
+            client,
+            params: [],
+            query: self.0,
+            cached: self.1.as_ref(),
+            extractor: |
+                row: &tokio_postgres::Row,
+            | -> Result<InviteListPendingBorrowed, tokio_postgres::Error> {
+                Ok(InviteListPendingBorrowed {
+                    id: row.try_get(0)?,
+                    preset_email: row.try_get(1)?,
+                    expires_at: row.try_get(2)?,
+                })
+            },
+            mapper: |it| InviteListPending::from(it),
+        }
+    }
+}
+pub struct InviteRevokeStmt(&'static str, Option<tokio_postgres::Statement>);
+pub fn invite_revoke() -> InviteRevokeStmt {
+    InviteRevokeStmt(
+        "DELETE FROM invite_token WHERE token_hash = $1 AND used_at IS NULL",
+        None,
+    )
+}
+impl InviteRevokeStmt {
+    pub async fn prepare<'a, C: GenericClient>(
+        mut self,
+        client: &'a C,
+    ) -> Result<Self, tokio_postgres::Error> {
+        self.1 = Some(client.prepare(self.0).await?);
+        Ok(self)
+    }
+    pub async fn bind<'c, 'a, 's, C: GenericClient, T1: crate::BytesSql>(
+        &'s self,
+        client: &'c C,
+        token_hash: &'a T1,
+    ) -> Result<u64, tokio_postgres::Error> {
+        client.execute(self.0, &[token_hash]).await
     }
 }
 pub struct InviteClaimStmt(&'static str, Option<tokio_postgres::Statement>);

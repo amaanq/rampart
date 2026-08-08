@@ -1,5 +1,5 @@
 {% extends "layout.html" %}
-{% block title %}admin — users{% endblock %}
+{% block title %}admin users{% endblock %}
 {% block body %}
 <div class="admin-heading">
     <h2>users</h2>
@@ -8,6 +8,55 @@
         <a href="/admin/domains">domains</a>
     </nav>
 </div>
+<section class="card admin-invites" data-admin-invites>
+    <div class="admin-invite-heading">
+        <div>
+            <h2>invite someone</h2>
+            <p class="hint">Tie the invite to an email or leave it open for anyone with the link.</p>
+        </div>
+    </div>
+    <form class="admin-invite-form" data-invite-create>
+        <label for="invite-email">email <span class="auth-optional">optional</span></label>
+        <div class="admin-invite-fields">
+            <input id="invite-email" name="email" type="email" autocomplete="email" placeholder="friend@example.com">
+            <button type="submit">create invite</button>
+        </div>
+        <p class="form-status" data-invite-status role="status"></p>
+    </form>
+    <div class="admin-invite-secret" data-invite-secret hidden>
+        <strong>Copy this link now. It will not be shown again.</strong>
+        <div class="admin-invite-link">
+            <input type="url" readonly data-invite-url aria-label="Invitation link">
+            <button type="button" class="secondary" data-invite-copy>copy</button>
+        </div>
+    </div>
+
+    <div class="admin-pending-invites">
+        <h3>pending invites</h3>
+        <table>
+            <thead>
+                <tr><th>email</th><th>expires</th><th></th></tr>
+            </thead>
+            <tbody data-invite-list>
+            {%- for invite in invites %}
+                <tr>
+                    <td>
+                        {% match invite.preset_email %}
+                        {% when Some with (email) %}{{ email }}
+                        {% when None %}<span class="hint">any email</span>
+                        {% endmatch %}
+                    </td>
+                    <td><time class="timestamp" datetime="{{ invite.expires_at|datetime_attribute }}">{{ invite.expires_at|ui_datetime }}</time></td>
+                    <td><button type="button" class="danger" data-invite-revoke data-invite-id="{{ invite.id }}">revoke</button></td>
+                </tr>
+            {%- endfor %}
+            {% if invites.is_empty() %}
+                <tr data-invite-empty><td colspan="3" class="empty-value">no pending invites</td></tr>
+            {% endif %}
+            </tbody>
+        </table>
+    </div>
+</section>
 <section>
     <table>
         <thead>
@@ -61,4 +110,5 @@
         </tbody>
     </table>
 </section>
+<script src="/static/admin-invites.js?v=20260807" defer></script>
 {% endblock %}

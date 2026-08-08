@@ -13,9 +13,11 @@ use rampart_codegen::queries::{
    api_keys,
    domains,
    sessions,
+   tokens,
    users,
 };
 use serde::Deserialize;
+use time::format_description::well_known::Rfc3339;
 
 use super::shared;
 use crate::{
@@ -25,6 +27,7 @@ use crate::{
       ApiError,
       ApiResult,
    },
+   flows,
 };
 
 pub(super) async fn admin_users_list(
@@ -76,6 +79,94 @@ pub(super) async fn admin_user_create(
          }
       })?;
    Ok((StatusCode::CREATED, Json(serde_json::json!({"id": id}))))
+}
+
+#[derive(Deserialize)]
+pub(super) struct AdminInviteCreate {
+   #[serde(default)]
+   email: Option<String>,
+}
+
+pub(super) async fn admin_invite_create(
+   State(state): State<AppState>,
+   AdminPrincipal(principal): AdminPrincipal,
+   Json(body): Json<AdminInviteCreate>,
+) -> ApiResult<(StatusCode, Json<serde_json::Value>)> {
+   use std::str::FromStr as _;
+
+   let email = body.email.and_then(|email| {
+      let email = email.trim().to_owned();
+      (!email.is_empty()).then_some(email)
+   });
+   if let Some(email) = email.as_deref() {
+      lettre::Address::from_str(email)
+         .map_err(|_| ApiError::BadRequest("Enter a valid email address.".into()))?;
+   }
+
+   let conn = state.pool.get().await?;
+   let invite = flows::create_invite(&conn, Some(principal.user_id), email.as_deref())
+      .await
+      .map_err(ApiError::Internal)?;
+   let url = format!(
+      "{}/signup/{}",
+      state.config.public_origin.trim_end_matches('/'),
+      invite.token
+   );
+   let expires_at = invite
+      .expires_at
+      .format(&Rfc3339)
+      .map_err(|error| ApiError::Internal(error.into()))?;
+   let delivered = if let Some(email) = email.as_deref() {
+      let message = format!(
+         "You have been invited to Rampart.\n\nOpen this link to create your \
+          account\n{url}\n\nThis link expires in seven days.\n"
+      );
+      match state
+         .mailer
+         .send(email, "rampart invitation", &message)
+         .await
+      {
+         Ok(()) => true,
+         Err(error) => {
+            tracing::error!(%error, %email, "invite email delivery failed");
+            false
+         },
+      }
+   } else {
+      false
+   };
+
+   Ok((
+      StatusCode::CREATED,
+      Json(serde_json::json!({
+         "id": invite.id,
+         "email": email,
+         "expires_at": expires_at,
+         "url": url,
+         "delivered": delivered,
+      })),
+   ))
+}
+
+pub(super) async fn admin_invite_revoke(
+   State(state): State<AppState>,
+   _: AdminPrincipal,
+   Path(id): Path<String>,
+) -> ApiResult<StatusCode> {
+   let token_hash =
+      hex::decode(id).map_err(|_| ApiError::BadRequest("Invalid invitation identifier.".into()))?;
+   if token_hash.len() != 32 {
+      return Err(ApiError::BadRequest(
+         "Invalid invitation identifier.".into(),
+      ));
+   }
+   let conn = state.pool.get().await?;
+   let deleted = tokens::invite_revoke().bind(&conn, &token_hash).await?;
+   if deleted == 0 {
+      Err(ApiError::NotFound)
+   } else {
+      Ok(StatusCode::NO_CONTENT)
+   }
 }
 
 pub(super) async fn admin_user_enable(

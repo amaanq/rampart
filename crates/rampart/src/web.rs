@@ -25,6 +25,7 @@ use rampart_codegen::queries::{
    domains,
    email_log,
    mailboxes,
+   tokens,
    users,
    webauthn,
 };
@@ -107,6 +108,7 @@ pub type PasskeyRowView = webauthn::ListForUser;
 pub type ApiKeyRowView = api_keys::ApiKeyRow;
 pub type AdminUserRowView = users::ListAdminCompact;
 pub type AdminDomainRowView = domains::ListAdmin;
+pub type PendingInviteRowView = tokens::InviteListPending;
 pub type ContactRowView = contacts::ListForAlias;
 pub type ActivityRowView = email_log::ActivityForAlias;
 
@@ -353,6 +355,7 @@ struct AdminUsersPage {
    is_admin:        bool,
    current_user_id: i64,
    users:           Vec<AdminUserRowView>,
+   invites:         Vec<PendingInviteRowView>,
 }
 
 async fn admin_users_page(
@@ -362,11 +365,13 @@ async fn admin_users_page(
    let conn = state.pool.get().await?;
    let user_email = lookup_user_email(&conn, principal.user_id).await?;
    let users = users::list_admin_compact().bind(&conn).all().await?;
+   let invites = tokens::invite_list_pending().bind(&conn).all().await?;
    render(&AdminUsersPage {
       user_email,
       is_admin: principal.is_admin,
       current_user_id: principal.user_id,
       users,
+      invites,
    })
 }
 

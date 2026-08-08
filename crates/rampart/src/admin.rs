@@ -14,7 +14,6 @@ use anyhow::{
    bail,
 };
 use data_encoding::BASE64URL_NOPAD;
-use hmac_sha256::Hash;
 use rampart_codegen::queries::{
    aliases,
    api_keys,
@@ -22,19 +21,15 @@ use rampart_codegen::queries::{
    gc as gc_q,
    mailboxes,
    sessions,
-   tokens,
    users,
 };
 use rand::rngs::SysRng;
-use time::{
-   Duration,
-   OffsetDateTime,
-   format_description::well_known::Rfc3339,
-};
+use time::format_description::well_known::Rfc3339;
 
 use crate::{
    auth,
    db,
+   flows,
    quota,
    sieve,
 };
@@ -160,16 +155,14 @@ pub async fn reset_password(url: &str, email: String) -> Result<()> {
 /// Returns an error if the database is unreachable or the token insert fails.
 pub async fn invite(url: &str, preset_email: Option<String>) -> Result<()> {
    let client = db::connect_once(url).await?;
-   let token = random_token(24);
-   let hash = Hash::hash(token.as_bytes()).to_vec();
-   let expires = OffsetDateTime::now_utc() + Duration::hours(24 * 7);
-   tokens::invite_create()
-      .bind(&client, &hash, &preset_email, &expires)
-      .await?;
-   let ts = expires.format(&Rfc3339).unwrap_or_default();
-   println!("invite token: {token}");
+   let invite = flows::create_invite(&client, None, preset_email.as_deref()).await?;
+   let ts = invite.expires_at.format(&Rfc3339).unwrap_or_default();
+   println!("invite token: {}", invite.token);
    println!("expires:      {ts}");
-   println!("give this to the friend. They visit /signup/{token}");
+   println!(
+      "give this to the friend. They visit /signup/{}",
+      invite.token
+   );
    if let Some(email) = preset_email {
       println!("preset email: {email} (they must sign up with exactly this)");
    }
