@@ -51,7 +51,7 @@ tracing-subscriber = { features = [ "env-filter", "fmt" ], version = "0.3.23" }
 
 hex       = "0.4.3"
 lru       = "0.18.1"
-pound     = "0.1.6"
+pound     = "0.4.2"
 rand      = "0.10.2"
 sd-notify = "0.5.0"
 time      = { features = [ "formatting", "serde", "serde-well-known" ], version = "0.3.53" }

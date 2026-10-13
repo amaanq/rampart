@@ -1,8 +1,3 @@
-#![expect(
-   clippy::missing_asserts_for_indexing,
-   reason = "Pound's derive indexes its compile-time command descriptor table"
-)]
-
 use std::{
    env,
    path::PathBuf,
